@@ -1,0 +1,24 @@
+{
+  "generated_at": "2026-03-02T20:21:30.851496+00:00",
+  "lookback_days": 30,
+  "threshold_used": 0.5,
+  "overall_metrics": {
+    "note": "No labelled predictions available in window."
+  },
+  "performance_delta": {
+    "roc_auc_delta": null,
+    "precision_delta": null,
+    "recall_delta": null,
+    "f1_delta": null
+  },
+  "training_baseline": {
+    "roc_auc": 0.715748,
+    "precision": 0.222222,
+    "recall": 0.039474,
+    "f1": 0.067039,
+    "threshold": 0.5,
+    "source": "eval_v20260301_113051.json"
+  },
+  "daily_performance": [],
+  "version_breakdown": []
+}

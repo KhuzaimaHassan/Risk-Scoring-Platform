@@ -1,0 +1,38 @@
+# config/training.yaml
+# ---------------------
+# Hyperparameter configuration for the fraud detection model.
+# All training parameters are read from here — never hardcoded in train.py.
+# Override individual values via environment variables or CLI flags.
+
+model:
+  name: "fraud_classifier"
+  algorithm: "random_forest"
+  framework: "sklearn"
+
+random_forest:
+  n_estimators: 300           # Number of trees — higher = more stable, slower
+  max_depth: 20               # Max tree depth; null = unlimited (risk of overfitting)
+  min_samples_split: 10       # Minimum samples to split an internal node
+  min_samples_leaf: 4         # Minimum samples in a leaf (controls overfitting)
+  max_features: "sqrt"        # Features per split: "sqrt" | "log2" | float
+  class_weight: "balanced"    # Handles class imbalance without resampling
+  n_jobs: -1                  # Use all available CPU cores
+  random_state: 42
+  bootstrap: true
+  oob_score: true             # Enable out-of-bag scoring (free validation estimate)
+
+split:
+  strategy: "time"            # "time" for temporal split | "random" for standard
+  test_size: 0.20             # Fraction of data held out for evaluation
+  # For time-based split: the last `test_size` fraction by timestamp is test set
+
+thresholds:
+  decision: 0.50              # Default classification threshold
+  # Optimise this per deployment context — fraud ops prefer high recall
+  precision_recall_tradeoff: "recall"  # "precision" | "recall" | "f1"
+
+retraining:
+  trigger_on_f1_below: 0.70
+  trigger_on_psi_above: 0.20
+  min_samples_required: 10000
+  auto_promote: false         # Require manual promotion after retrain

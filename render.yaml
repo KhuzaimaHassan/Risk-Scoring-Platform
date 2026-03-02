@@ -1,0 +1,48 @@
+services:
+  - type: web
+    name: risk-scoring-platform
+    runtime: python
+    plan: free
+    rootDir: .
+    buildCommand: pip install --upgrade pip && pip install -r requirements-run.txt
+    startCommand: python -m uvicorn src.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.0
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: API_PORT
+        value: 10000
+      - key: DB_HOST
+        fromDatabase:
+          name: risk-scoring-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: risk-scoring-db
+          property: port
+      - key: DB_NAME
+        fromDatabase:
+          name: risk-scoring-db
+          property: database
+      - key: DB_USER
+        fromDatabase:
+          name: risk-scoring-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: risk-scoring-db
+          property: password
+      - key: ALLOWED_ORIGINS
+        value: '["*"]'
+
+databases:
+  - name: risk-scoring-db
+    plan: free

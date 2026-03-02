@@ -1,0 +1,36 @@
+# requirements-run.txt
+# Flexible (no hard pins) for Python 3.13 compatibility.
+# Covers all project modules needed to run seed → train → serve.
+
+# --- Web Framework ---
+fastapi
+uvicorn[standard]
+python-multipart
+
+# --- Database ---
+sqlalchemy[asyncio]
+asyncpg
+psycopg2-binary
+alembic
+
+# --- Config ---
+pydantic>=2.0
+pydantic-settings
+PyYAML
+
+# --- ML ---
+scikit-learn
+numpy
+pandas
+joblib
+
+# --- Data Generation ---
+faker
+
+# --- Utilities ---
+python-dotenv
+httpx
+tenacity
+
+# --- Logging ---
+structlog

@@ -1,0 +1,42 @@
+# ============================================================
+# requirements.txt — pinned production dependencies
+# Update versions after testing in staging
+# ============================================================
+
+# --- Web Framework ---
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9        # Form data / file uploads
+
+# --- Database ---
+sqlalchemy==2.0.30
+asyncpg==0.29.0                # Async PostgreSQL driver (runtime)
+psycopg2-binary==2.9.9         # Sync driver for Alembic + scripts
+alembic==1.13.1
+
+# --- Config ---
+pydantic==2.7.1
+pydantic-settings==2.3.0
+PyYAML==6.0.1                  # training.yaml config parsing
+
+# --- ML ---
+scikit-learn==1.5.0
+xgboost==2.0.3
+numpy==1.26.4
+pandas==2.2.2
+joblib==1.4.2                  # Model serialisation
+
+# --- Monitoring & Stats ---
+scipy==1.13.0                  # KS test, statistical utilities
+shap==0.45.0                   # Feature importance / explainability
+
+# --- Data Generation ---
+faker==25.0.0                  # Synthetic PII data (names, emails, companies)
+
+# --- Utilities ---
+python-dotenv==1.0.1
+httpx==0.27.0                  # Async HTTP client (health checks, webhooks)
+tenacity==8.3.0               # Retry logic for DB connections
+
+# --- Logging ---
+structlog==24.1.0              # Structured JSON logging

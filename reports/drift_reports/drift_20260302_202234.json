@@ -1,0 +1,262 @@
+{
+  "generated_at": "2026-03-02T20:22:34.576048+00:00",
+  "lookback_days": 7,
+  "drift_threshold": 0.05,
+  "train_samples": 5000,
+  "live_samples": 0,
+  "features_tested": 0,
+  "features_drifted": 0,
+  "drift_score": 0.0,
+  "alert_level": "green",
+  "drifted_features": [],
+  "feature_details": [
+    {
+      "feature": "amount_usd",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "is_international",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "is_online_merchant",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "hour_of_day",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "day_of_week",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "is_weekend",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "is_night",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "channel_code",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "payment_method_code",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "user_account_age_days",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "user_risk_tier_code",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "user_credit_score",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "user_kyc_verified",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "merchant_risk_level_code",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "merchant_historical_fraud_rate",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "merchant_is_high_risk_category",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "merchant_avg_transaction_amount",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "user_txn_count_1h",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "user_txn_count_24h",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "user_txn_count_7d",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "user_avg_amount_7d",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "user_std_amount_7d",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "user_max_amount_7d",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "user_total_amount_24h",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "user_velocity_ratio_1h_24h",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "time_since_last_txn_minutes",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "amount_vs_user_avg_ratio",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "amount_vs_merchant_avg_ratio",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "merchant_txn_count_7d",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "merchant_fraud_rate_7d",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    },
+    {
+      "feature": "merchant_avg_amount_7d",
+      "test": "skipped",
+      "statistic": null,
+      "p_value": null,
+      "drifted": false,
+      "reason": "column not available in baseline or live data"
+    }
+  ]
+}

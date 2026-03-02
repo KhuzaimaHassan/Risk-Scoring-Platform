@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Risk Scoring Console</title>
+  <link rel="stylesheet" href="/ui/styles.css">
+</head>
+<body>
+  <div class="bg-shape a"></div>
+  <div class="bg-shape b"></div>
+  <main class="app">
+    <header class="hero">
+      <p class="eyebrow">Fraud Detection</p>
+      <h1>Risk Scoring Console</h1>
+      <p class="sub">Interactive controls for health checks, model metadata, and live transaction scoring.</p>
+    </header>
+
+    <section class="panel grid">
+      <article class="card">
+        <h2>Service Status</h2>
+        <p>Check API readiness and current model load state.</p>
+        <button id="btn-health" class="btn">Run Health Check</button>
+      </article>
+
+      <article class="card">
+        <h2>Model Metadata</h2>
+        <p>Inspect active production model version and metrics.</p>
+        <button id="btn-model" class="btn">Get Model Info</button>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>Score Transaction</h2>
+      <form id="predict-form" class="predict-form">
+        <label for="txn-id">Transaction UUID</label>
+        <input
+          id="txn-id"
+          name="txn-id"
+          type="text"
+          value="c1212b7d-809e-416a-9983-6001405ac382"
+          placeholder="3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          required
+        >
+        <div class="row">
+          <label class="checkbox">
+            <input id="include-features" type="checkbox">
+            Include feature snapshot
+          </label>
+          <button type="submit" class="btn btn-accent">Predict Risk</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel">
+      <div class="result-head">
+        <h2>Response</h2>
+        <button id="btn-clear" class="btn btn-ghost" type="button">Clear</button>
+      </div>
+      <div id="response-view" class="response-view">
+        <p class="placeholder">Run an action to see results.</p>
+      </div>
+      <details class="raw-wrap">
+        <summary>View Technical Details</summary>
+        <pre id="output" class="output">Run an action to see API output...</pre>
+      </details>
+    </section>
+  </main>
+  <script src="/ui/app.js" defer></script>
+</body>
+</html>
