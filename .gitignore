@@ -20,6 +20,17 @@ env/
 *.log
 *_output.txt
 
+# Generated reports/artifacts (keep only curated files in git)
+reports/drift_reports/
+reports/monitoring_snapshots/
+reports/eval_*.json
+
+# Ignore newly generated model artifacts/metadata by default
+models/model_*.pkl
+models/metadata_*.json
+!models/model_v20260301_113051.pkl
+!models/metadata_v20260301_113051.json
+
 # IDE/system
 .DS_Store
 Thumbs.db
