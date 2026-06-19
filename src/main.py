@@ -246,8 +246,8 @@ def create_app() -> FastAPI:
     app.include_router(predict_router, prefix=API_PREFIX)
     app.include_router(health_router, prefix=API_PREFIX)
 
-    # Serve a lightweight interactive UI at /ui
-    ui_dir = Path(__file__).parent / "ui"
+    # Serve the React Vite built frontend at /ui
+    ui_dir = Path(__file__).parent.parent / "frontend" / "dist"
     if ui_dir.exists():
         app.mount("/ui", StaticFiles(directory=str(ui_dir), html=True), name="ui")
 
