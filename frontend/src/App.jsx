@@ -33,8 +33,8 @@ function App() {
     const fetchStatus = async () => {
       try {
         const [hRes, mRes] = await Promise.all([
-          fetch('http://127.0.0.1:8000/api/v1/health').catch(() => ({ ok: false })),
-          fetch('http://127.0.0.1:8000/api/v1/model-info').catch(() => ({ ok: false }))
+          fetch('/api/v1/health').catch(() => ({ ok: false })),
+          fetch('/api/v1/model-info').catch(() => ({ ok: false }))
         ]);
         
         if (hRes.ok) setHealth(await hRes.json());
@@ -56,7 +56,7 @@ function App() {
     setScoring(true);
     setScoreResult(null);
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/v1/predict', {
+      const res = await fetch('/api/v1/predict', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transaction_id: txnId, include_features: false })
