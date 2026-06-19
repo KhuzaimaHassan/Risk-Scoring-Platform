@@ -10,8 +10,7 @@ python-multipart==0.0.9        # Form data / file uploads
 
 # --- Database ---
 sqlalchemy==2.0.30
-asyncpg==0.29.0                # Async PostgreSQL driver (runtime)
-psycopg2-binary==2.9.9         # Sync driver for Alembic + scripts
+aiosqlite==0.20.0              # Async SQLite driver
 alembic==1.13.1
 
 # --- Config ---

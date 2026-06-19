@@ -33,7 +33,7 @@ from sqlalchemy import (
     Text,
 )
 from sqlalchemy import JSON
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Uuid as UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database.base import Base, TimestampMixin

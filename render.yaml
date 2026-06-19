@@ -22,29 +22,5 @@ services:
         value: 0.0.0.0
       - key: API_PORT
         value: 10000
-      - key: DB_HOST
-        fromDatabase:
-          name: risk-scoring-db
-          property: host
-      - key: DB_PORT
-        fromDatabase:
-          name: risk-scoring-db
-          property: port
-      - key: DB_NAME
-        fromDatabase:
-          name: risk-scoring-db
-          property: database
-      - key: DB_USER
-        fromDatabase:
-          name: risk-scoring-db
-          property: user
-      - key: DB_PASSWORD
-        fromDatabase:
-          name: risk-scoring-db
-          property: password
       - key: ALLOWED_ORIGINS
         value: '["*"]'
-
-databases:
-  - name: risk-scoring-db
-    plan: free

@@ -207,17 +207,13 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        """Synchronous DSN for Alembic and scripts (psycopg2 driver)."""
-        pwd = self.db_password.get_secret_value()
-        auth = f"{self.db_user}:{pwd}" if pwd else self.db_user
-        return f"postgresql+psycopg2://{auth}@{self.db_host}:{self.db_port}/{self.db_name}"
+        """Synchronous DSN for Alembic and scripts."""
+        return "sqlite:///risk_scoring.db"
 
     @property
     def async_database_url(self) -> str:
-        """Async DSN for FastAPI runtime (asyncpg driver)."""
-        pwd = self.db_password.get_secret_value()
-        auth = f"{self.db_user}:{pwd}" if pwd else self.db_user
-        return f"postgresql+asyncpg://{auth}@{self.db_host}:{self.db_port}/{self.db_name}"
+        """Async DSN for FastAPI runtime."""
+        return "sqlite+aiosqlite:///risk_scoring.db"
 
     # -----------------------------------------------------------------------
     # Validators

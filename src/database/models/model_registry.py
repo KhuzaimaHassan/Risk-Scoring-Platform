@@ -27,7 +27,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy import JSON
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Uuid as UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.database.base import Base, TimestampMixin

@@ -27,13 +27,10 @@ settings = get_settings()
 # Async engine  (used by FastAPI endpoints at runtime)
 # ---------------------------------------------------------------------------
 async_engine = create_async_engine(
-    settings.async_database_url,          # postgresql+asyncpg://...
-    pool_size=settings.db_pool_size,       # default 10
-    max_overflow=settings.db_max_overflow, # default 20
-    pool_pre_ping=True,                    # recycle stale connections
-    pool_recycle=3600,                     # recycle after 1 hour
-    echo=settings.db_echo,                 # SQL query logging (only in dev)
+    settings.async_database_url,
+    echo=settings.db_echo,
     future=True,
+    connect_args={"check_same_thread": False}
 )
 
 AsyncSessionFactory: async_sessionmaker[AsyncSession] = async_sessionmaker(
@@ -48,13 +45,10 @@ AsyncSessionFactory: async_sessionmaker[AsyncSession] = async_sessionmaker(
 # Sync engine  (used by Alembic, scripts, and background jobs)
 # ---------------------------------------------------------------------------
 sync_engine = create_engine(
-    settings.database_url,                 # postgresql+psycopg2://...
-    pool_size=settings.db_pool_size,
-    max_overflow=settings.db_max_overflow,
-    pool_pre_ping=True,
-    pool_recycle=3600,
+    settings.database_url,
     echo=settings.db_echo,
     future=True,
+    connect_args={"check_same_thread": False}
 )
 
 SyncSessionFactory: sessionmaker[Session] = sessionmaker(
