@@ -32,6 +32,7 @@ Core flow:
 - `src/api/routes/predict.py`: `/predict` and `/predict/batch` (Secured with JWT)
 - `src/api/routes/auth.py`: `/token` (OAuth2 JWT generation)
 - `src/services/prediction_service.py`: orchestration layer (DB fetch -> features -> model -> log)
+- `src/services/drift_service.py`: APScheduler job for drift detection and automated retraining
 - `src/features/feature_pipeline.py`: feature computation pipeline
 - `src/training/train.py`: training + evaluation + artifact persistence
 - `models/registry.json`: active model registry

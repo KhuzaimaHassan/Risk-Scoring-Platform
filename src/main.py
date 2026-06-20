@@ -151,6 +151,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("Database connectivity check failed: %s — continuing startup.", exc)
 
+    # ── Start APScheduler for automated drift detection ────────────────────
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from src.services.drift_service import check_drift_and_retrain
+    
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(check_drift_and_retrain, "interval", minutes=5, id="drift_check")
+    scheduler.start()
+    app.state.scheduler = scheduler
+    logger.info("Started APScheduler for drift detection (interval=5m).")
+
     logger.info("API startup complete. Ready to serve requests.")
     logger.info("=" * 60)
 
@@ -158,6 +168,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # ── Shutdown ─────────────────────────────────────────────────────────
     logger.info("API shutting down …")
+    if hasattr(app.state, "scheduler"):
+        app.state.scheduler.shutdown()
+        logger.info("APScheduler stopped.")
 
 
 # ---------------------------------------------------------------------------

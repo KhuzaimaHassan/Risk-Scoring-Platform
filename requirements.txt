@@ -38,6 +38,7 @@ httpx==0.27.0                  # Async HTTP client (health checks, webhooks)
 tenacity==8.3.0               # Retry logic for DB connections
 pyjwt==2.8.0                  # JWT authentication
 bcrypt==4.1.2                 # Password hashing
+apscheduler==3.10.4           # Background task scheduling
 
 # --- Logging ---
 structlog==24.1.0              # Structured JSON logging

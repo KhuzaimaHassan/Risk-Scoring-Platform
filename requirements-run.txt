@@ -32,6 +32,7 @@ httpx
 tenacity
 pyjwt
 bcrypt
+apscheduler
 
 # --- Logging ---
 structlog
