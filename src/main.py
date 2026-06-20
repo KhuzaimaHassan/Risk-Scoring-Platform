@@ -255,6 +255,14 @@ def create_app() -> FastAPI:
             "health": "/health",
         }
 
+    # ── Temporary Seed Endpoint ───────────────────────────────────────────
+    from fastapi import BackgroundTasks
+    @app.get("/api/v1/seed")
+    async def trigger_seed(background_tasks: BackgroundTasks):
+        from src.data.synthetic_generator import seed_database
+        background_tasks.add_task(seed_database)
+        return {"status": "Seeding started in the background. Please wait 1-2 minutes before checking the database."}
+
     # ── Register routers ──────────────────────────────────────────────────
     API_PREFIX = "/api/v1"
     app.include_router(predict_router, prefix=API_PREFIX)
