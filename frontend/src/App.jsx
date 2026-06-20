@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, ShieldAlert, ShieldCheck, Zap, Server, ActivitySquare } from 'lucide-react';
+import { Activity, ShieldAlert, ShieldCheck, Zap, Server, ActivitySquare, Lock } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import './index.css';
 
@@ -21,6 +21,12 @@ const initialTransactions = [
 ];
 
 function App() {
+  const [token, setToken] = useState(localStorage.getItem('token') || null);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
   const [health, setHealth] = useState(null);
   const [modelInfo, setModelInfo] = useState(null);
   const [transactions, setTransactions] = useState(initialTransactions);
@@ -28,15 +34,26 @@ function App() {
   const [scoring, setScoring] = useState(false);
   const [scoreResult, setScoreResult] = useState(null);
 
+  const logout = () => {
+    setToken(null);
+    localStorage.removeItem('token');
+  };
+
   // Fetch Health & Model Info
   useEffect(() => {
+    if (!token) return;
+
     const fetchStatus = async () => {
       try {
+        const headers = { 'Authorization': `Bearer ${token}` };
+        
         const [hRes, mRes] = await Promise.all([
-          fetch('/api/v1/health').catch(() => ({ ok: false })),
-          fetch('/api/v1/model-info').catch(() => ({ ok: false }))
+          fetch('/api/v1/health', { headers }).catch(() => ({ ok: false })),
+          fetch('/api/v1/model-info', { headers }).catch(() => ({ ok: false }))
         ]);
         
+        if (hRes.status === 401 || mRes.status === 401) return logout();
+
         if (hRes.ok) setHealth(await hRes.json());
         if (mRes.ok) setModelInfo(await mRes.json());
       } catch (err) {
@@ -47,7 +64,35 @@ function App() {
     // Refresh health every 30s
     const intv = setInterval(fetchStatus, 30000);
     return () => clearInterval(intv);
-  }, []);
+  }, [token]);
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setLoginError('');
+    setIsLoggingIn(true);
+    try {
+      const formData = new URLSearchParams();
+      formData.append('username', username);
+      formData.append('password', password);
+
+      const res = await fetch('/api/v1/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formData
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setToken(data.access_token);
+        localStorage.setItem('token', data.access_token);
+      } else {
+        setLoginError('Invalid username or password');
+      }
+    } catch (err) {
+      setLoginError('Network error');
+    }
+    setIsLoggingIn(false);
+  };
 
   const handleScore = async (e) => {
     e.preventDefault();
@@ -58,9 +103,16 @@ function App() {
     try {
       const res = await fetch('/api/v1/predict', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ transaction_id: txnId, include_features: false })
       });
+      if (res.status === 401) {
+        setScoring(false);
+        return logout();
+      }
       if (res.ok) {
         const data = await res.json();
         setScoreResult(data);
@@ -82,6 +134,54 @@ function App() {
     setScoring(false);
   };
 
+  if (!token) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', backgroundColor: 'var(--bg-color)' }}>
+        <div className="card glass" style={{ width: '400px', padding: '2rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '2rem' }}>
+            <div style={{ padding: '1rem', backgroundColor: 'rgba(59, 130, 246, 0.1)', borderRadius: '50%', marginBottom: '1rem' }}>
+              <Lock size={32} color="var(--accent-color)" />
+            </div>
+            <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>Admin Login</h2>
+            <p style={{ color: 'var(--text-secondary)' }}>Risk Scoring Platform</p>
+          </div>
+
+          {loginError && (
+            <div style={{ padding: '0.75rem', marginBottom: '1rem', backgroundColor: 'rgba(239, 68, 68, 0.1)', color: 'var(--danger)', borderRadius: '0.5rem', fontSize: '0.875rem', textAlign: 'center' }}>
+              {loginError}
+            </div>
+          )}
+
+          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Username</label>
+              <input 
+                type="text" 
+                className="input-field" 
+                value={username} 
+                onChange={e => setUsername(e.target.value)} 
+                required 
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Password</label>
+              <input 
+                type="password" 
+                className="input-field" 
+                value={password} 
+                onChange={e => setPassword(e.target.value)} 
+                required 
+              />
+            </div>
+            <button type="submit" className="btn btn-primary" style={{ marginTop: '1rem' }} disabled={isLoggingIn}>
+              {isLoggingIn ? 'Authenticating...' : 'Sign In'}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-container">
       {/* Sidebar */}
@@ -95,6 +195,11 @@ function App() {
           <a className="nav-item"><Server size={18} /> Models Registry</a>
           <a className="nav-item"><ShieldAlert size={18} /> Review Queue</a>
         </nav>
+        <div style={{ marginTop: 'auto', paddingTop: '2rem' }}>
+          <button className="btn" style={{ width: '100%', backgroundColor: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }} onClick={logout}>
+            Sign Out
+          </button>
+        </div>
       </aside>
 
       {/* Main Content */}

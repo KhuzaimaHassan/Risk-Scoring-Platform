@@ -30,6 +30,8 @@ faker
 python-dotenv
 httpx
 tenacity
+pyjwt
+bcrypt
 
 # --- Logging ---
 structlog

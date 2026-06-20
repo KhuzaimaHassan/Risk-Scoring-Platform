@@ -196,6 +196,22 @@ class Settings(BaseSettings):
         default=SecretStr("change-this-in-production"),
         description="Secret key for signing tokens / CSRF protection",
     )
+    jwt_algorithm: str = Field(
+        default="HS256",
+        description="Algorithm used for JWT generation",
+    )
+    access_token_expire_minutes: int = Field(
+        default=60 * 24, # 1 day
+        description="JWT access token expiry in minutes",
+    )
+    admin_username: str = Field(
+        default="admin",
+        description="Hardcoded admin username for the dashboard",
+    )
+    admin_password: str = Field(
+        default="admin123",
+        description="Hardcoded admin password for the dashboard",
+    )
     allowed_origins: list[str] = Field(
         default=["http://localhost:3000"],
         description="CORS allowed origins list",

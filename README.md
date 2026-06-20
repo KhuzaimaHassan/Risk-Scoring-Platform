@@ -3,7 +3,7 @@
 
 # Risk Scoring Platform
 
-Production-style fraud risk scoring platform built with FastAPI, PostgreSQL, and scikit-learn.  
+Production-style fraud risk scoring platform built with FastAPI, SQLite, and scikit-learn, featuring a modern React frontend with JWT authentication.
 It supports:
 - real-time transaction scoring
 - model versioning and metadata registry
@@ -29,16 +29,17 @@ Given a `transaction_id` already stored in the database, the platform:
 
 Core flow:
 - `src/main.py`: app startup, model caching, middleware, route wiring, UI mount
-- `src/api/routes/predict.py`: `/predict` and `/predict/batch`
+- `src/api/routes/predict.py`: `/predict` and `/predict/batch` (Secured with JWT)
+- `src/api/routes/auth.py`: `/token` (OAuth2 JWT generation)
 - `src/services/prediction_service.py`: orchestration layer (DB fetch -> features -> model -> log)
 - `src/features/feature_pipeline.py`: feature computation pipeline
 - `src/training/train.py`: training + evaluation + artifact persistence
 - `models/registry.json`: active model registry
 
 UI:
-- `src/ui/index.html`
-- `src/ui/styles.css`
-- `src/ui/app.js`
+- `frontend/src/App.jsx`: React frontend with login screen and real-time dashboard
+- `frontend/src/index.css`: Tailwind-free vanilla CSS design system
+- `frontend/dist/`: Built static assets served by FastAPI
 
 ## API Summary
 
@@ -47,8 +48,9 @@ Base path: `/api/v1`
 - `GET /health`: liveness/readiness + DB + model state
 - `GET /model-info`: active model metadata + metrics
 - `GET /models`: model registry listing
-- `POST /predict`: score one transaction
-- `POST /predict/batch`: score multiple transactions
+- `POST /token`: Obtain JWT token (requires `admin_username` and `admin_password`)
+- `POST /predict`: score one transaction (requires JWT)
+- `POST /predict/batch`: score multiple transactions (requires JWT)
 
 Example request:
 

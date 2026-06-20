@@ -14,7 +14,9 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status, Depends
+
+from src.api.auth import get_current_user
 
 from src.api.dependencies import AsyncDBSession, CachedThreshold
 from src.api.schemas import (
@@ -67,6 +69,7 @@ async def predict_transaction(
     request: Request,
     db: AsyncDBSession,
     threshold: CachedThreshold,
+    current_user: str = Depends(get_current_user),
 ) -> PredictResponse:
     """
     Full inference pipeline for a single transaction.
@@ -130,6 +133,7 @@ async def predict_batch(
     request: Request,
     db: AsyncDBSession,
     threshold: CachedThreshold,
+    current_user: str = Depends(get_current_user),
 ) -> PredictBatchResponse:
     """Batch prediction endpoint — sequential scoring with per-item error isolation."""
     import time
