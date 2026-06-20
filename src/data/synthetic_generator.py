@@ -864,7 +864,7 @@ def seed_database(cfg: GeneratorConfig | None = None) -> None:
                         "amount_usd": t["amount_usd"],
                         "status": t["status"].upper(),
                         "channel": t["channel"].upper(),
-                        "payment_method": t["payment_method"].upper(),
+                        "payment_method": "BUY_NOW_PAY_LATER" if t["payment_method"] == "bnpl" else t["payment_method"].upper(),
                         "ip_address_hash": t["ip_address_hash"],
                         "device_fingerprint_hash": t["device_fingerprint_hash"],
                         "is_international": t["is_international"],
