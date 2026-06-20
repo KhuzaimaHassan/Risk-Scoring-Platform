@@ -256,10 +256,14 @@ def create_app() -> FastAPI:
         }
 
     @app.get("/api/v1/seed")
-    async def trigger_seed(background_tasks: BackgroundTasks):
-        from src.data.synthetic_generator import seed_database
-        background_tasks.add_task(seed_database)
-        return {"status": "Seeding started in the background. Please wait 1-2 minutes before checking the database."}
+    def trigger_seed():
+        import traceback
+        try:
+            from src.data.synthetic_generator import seed_database
+            seed_database()
+            return {"status": "success", "message": "Database seeded successfully!"}
+        except Exception as e:
+            return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}
 
     # ── Register routers ──────────────────────────────────────────────────
     API_PREFIX = "/api/v1"
