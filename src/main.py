@@ -50,7 +50,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, BackgroundTasks
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -255,8 +255,6 @@ def create_app() -> FastAPI:
             "health": "/health",
         }
 
-    # ── Temporary Seed Endpoint ───────────────────────────────────────────
-    from fastapi import BackgroundTasks
     @app.get("/api/v1/seed")
     async def trigger_seed(background_tasks: BackgroundTasks):
         from src.data.synthetic_generator import seed_database
