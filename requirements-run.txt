@@ -9,7 +9,8 @@ python-multipart
 
 # --- Database ---
 sqlalchemy[asyncio]
-aiosqlite
+asyncpg
+psycopg2-binary
 alembic
 
 # --- Config ---

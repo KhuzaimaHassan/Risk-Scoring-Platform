@@ -224,12 +224,12 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         """Synchronous DSN for Alembic and scripts."""
-        return "sqlite:///risk_scoring.db"
+        return f"postgresql://{self.db_user}:{self.db_password.get_secret_value()}@{self.db_host}:{self.db_port}/{self.db_name}"
 
     @property
     def async_database_url(self) -> str:
         """Async DSN for FastAPI runtime."""
-        return "sqlite+aiosqlite:///risk_scoring.db"
+        return f"postgresql+asyncpg://{self.db_user}:{self.db_password.get_secret_value()}@{self.db_host}:{self.db_port}/{self.db_name}"
 
     # -----------------------------------------------------------------------
     # Validators

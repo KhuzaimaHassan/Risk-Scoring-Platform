@@ -10,7 +10,8 @@ python-multipart==0.0.9        # Form data / file uploads
 
 # --- Database ---
 sqlalchemy==2.0.30
-aiosqlite==0.20.0              # Async SQLite driver
+asyncpg==0.29.0
+psycopg2-binary==2.9.9
 alembic==1.13.1
 
 # --- Config ---

@@ -30,7 +30,6 @@ async_engine = create_async_engine(
     settings.async_database_url,
     echo=settings.db_echo,
     future=True,
-    connect_args={"check_same_thread": False}
 )
 
 AsyncSessionFactory: async_sessionmaker[AsyncSession] = async_sessionmaker(
@@ -48,7 +47,6 @@ sync_engine = create_engine(
     settings.database_url,
     echo=settings.db_echo,
     future=True,
-    connect_args={"check_same_thread": False}
 )
 
 SyncSessionFactory: sessionmaker[Session] = sessionmaker(
