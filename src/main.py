@@ -259,8 +259,9 @@ def create_app() -> FastAPI:
     def trigger_seed():
         import traceback
         try:
-            from src.data.synthetic_generator import seed_database
-            seed_database()
+            from src.data.synthetic_generator import seed_database, GeneratorConfig
+            cfg = GeneratorConfig(n_users=200, n_merchants=50, n_transactions=5000)
+            seed_database(cfg)
             return {"status": "success", "message": "Database seeded successfully!"}
         except Exception as e:
             return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}
