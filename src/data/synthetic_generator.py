@@ -738,8 +738,9 @@ def seed_database(cfg: GeneratorConfig | None = None) -> None:
         TransactionStatus, TransactionChannel, PaymentMethod,
     )
     
-    # Ensure all tables exist before we start inserting
+    # Ensure all tables exist before we start inserting, clear existing data
     with sync_db_context() as db:
+        Base.metadata.drop_all(bind=db.bind)
         Base.metadata.create_all(bind=db.bind)
 
     # --- Generate in-memory data ---
