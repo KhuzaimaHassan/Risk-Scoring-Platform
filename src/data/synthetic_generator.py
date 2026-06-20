@@ -733,11 +733,10 @@ def seed_database(cfg: GeneratorConfig | None = None) -> None:
     from sqlalchemy import text
     from src.database.session import sync_db_context
     from src.database.models import (  # noqa: F401 — registers models with Base
-        DimUser, DimMerchant, FactTransaction,
+        Base, DimUser, DimMerchant, FactTransaction,
         RiskTier, MerchantCategory, MerchantRiskLevel,
         TransactionStatus, TransactionChannel, PaymentMethod,
     )
-    from src.database.models.base import Base
     
     # Ensure all tables exist before we start inserting
     with sync_db_context() as db:
