@@ -737,6 +737,11 @@ def seed_database(cfg: GeneratorConfig | None = None) -> None:
         RiskTier, MerchantCategory, MerchantRiskLevel,
         TransactionStatus, TransactionChannel, PaymentMethod,
     )
+    from src.database.models.base import Base
+    
+    # Ensure all tables exist before we start inserting
+    with sync_db_context() as db:
+        Base.metadata.create_all(bind=db.bind)
 
     # --- Generate in-memory data ---
     users = generate_users(cfg, fake, rng)
