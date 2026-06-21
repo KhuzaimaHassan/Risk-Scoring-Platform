@@ -1,16 +1,30 @@
 # Live Demo
-## https://risk-scoring-platform.onrender.com/ui/
+## https://risk-scoring-platform-9h5e.onrender.com/ui/
 
 # Risk Scoring Platform
 
-Production-style fraud risk scoring platform built with FastAPI, SQLite, and scikit-learn, featuring a modern React frontend with JWT authentication.
+Production-style fraud risk scoring platform built with FastAPI, PostgreSQL (via Supabase), and scikit-learn, featuring a modern React frontend with JWT authentication.
 It supports:
-- real-time transaction scoring
-- model versioning and metadata registry
-- feature engineering with leakage-safe historical windows
-- API + interactive UI
+- Real-time transaction scoring with sub-50ms latency
+- Model versioning and metadata registry
+- Feature engineering with leakage-safe historical windows
+- API + interactive real-time dashboard UI
 
-## What This Project Does
+## Tech Stack
+- **Backend**: Python 3.12, FastAPI, SQLAlchemy (Async), Uvicorn
+- **Database**: PostgreSQL (hosted on Supabase) with asyncpg
+- **Machine Learning**: Scikit-Learn, Pandas, Joblib
+- **Frontend**: React, Vite, Recharts, Lucide Icons
+- **Deployment**: Render (Web Service), GitHub Actions (optional)
+
+## What Is Achieved
+
+This project successfully implements a complete, end-to-end Machine Learning Operations (MLOps) pipeline and full-stack application:
+1. **Real-Time Feature Engineering**: Dynamically computes user and merchant historical aggregations (e.g., velocity, average transaction amounts) at the exact time of the transaction to prevent data leakage.
+2. **Production ML Serving**: Wraps a scikit-learn model in a high-performance, asynchronous FastAPI inference service.
+3. **Immutable Audit Logging**: Every prediction is logged to a `prediction_log` table with its exact feature snapshot and model version for regulatory compliance and model monitoring.
+4. **Resilient Database Architecture**: Implements connection pooling (`pool_pre_ping`) and async SQLAlchemy to gracefully handle serverless database connection limits (Supabase PgBouncer).
+5. **Real-Time Dashboard**: A stunning React frontend that polls the backend to display live KPIs, animated Risk Score Trends, and a live feed of recent transactions.
 
 Given a `transaction_id` already stored in the database, the platform:
 1. Loads transaction + user + merchant context
@@ -21,9 +35,28 @@ Given a `transaction_id` already stored in the database, the platform:
 
 ## Live Endpoints
 
-- UI: `https://risk-scoring-platform.onrender.com/ui/`
-- Health: `https://risk-scoring-platform.onrender.com/api/v1/health`
-- OpenAPI Docs: `https://risk-scoring-platform.onrender.com/docs`
+- UI: `https://risk-scoring-platform-9h5e.onrender.com/ui/`
+- Health: `https://risk-scoring-platform-9h5e.onrender.com/api/v1/health`
+- OpenAPI Docs: `https://risk-scoring-platform-9h5e.onrender.com/docs`
+
+## Architecture & Flow
+
+```mermaid
+graph TD
+    Client[Client App / Postman] -->|POST /predict| API[FastAPI Backend]
+    UI[React Dashboard] -->|GET /dashboard/*| API
+    
+    sublayer_DB[Supabase PostgreSQL]
+    
+    API -->|Fetch Context| DB[(Fact & Dim Tables)]
+    DB -.->|Raw Data| FE[Feature Engineering Pipeline]
+    FE -->|Feature Vector| ML[ML Model Inference]
+    ML -->|Risk Score & Decision| API
+    ML -.->|Audit Log| PL[(Prediction Log Table)]
+    
+    API -->|Response| Client
+    API -->|Live Feed| UI
+```
 
 ## Architecture Overview
 
