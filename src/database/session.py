@@ -30,6 +30,8 @@ async_engine = create_async_engine(
     settings.async_database_url,
     echo=settings.db_echo,
     future=True,
+    pool_pre_ping=True,
+    pool_recycle=300,
 )
 
 AsyncSessionFactory: async_sessionmaker[AsyncSession] = async_sessionmaker(
@@ -47,6 +49,8 @@ sync_engine = create_engine(
     settings.database_url,
     echo=settings.db_echo,
     future=True,
+    pool_pre_ping=True,
+    pool_recycle=300,
 )
 
 SyncSessionFactory: sessionmaker[Session] = sessionmaker(
