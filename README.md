@@ -90,7 +90,7 @@ Example request:
 
 ```json
 {
-  "transaction_id": "c1212b7d-809e-416a-9983-6001405ac382",
+  "transaction_id": "fbdd18de-ce99-4466-8a0f-ab5127071e88",
   "include_features": false
 }
 ```
