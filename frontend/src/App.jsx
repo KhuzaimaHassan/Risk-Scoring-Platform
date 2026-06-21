@@ -3,23 +3,6 @@ import { Activity, ShieldAlert, ShieldCheck, Zap, Server, ActivitySquare, Lock }
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import './index.css';
 
-const mockChartData = [
-  { time: '10:00', score: 12 },
-  { time: '10:05', score: 25 },
-  { time: '10:10', score: 15 },
-  { time: '10:15', score: 45 },
-  { time: '10:20', score: 85 },
-  { time: '10:25', score: 20 },
-  { time: '10:30', score: 35 },
-];
-
-const initialTransactions = [
-  { id: 'txn-1', score: 85, status: 'Flagged', time: '10:20:15', amount: '$1,200.00' },
-  { id: 'txn-2', score: 12, status: 'Approved', time: '10:20:12', amount: '$45.00' },
-  { id: 'txn-3', score: 25, status: 'Approved', time: '10:19:45', amount: '$89.99' },
-  { id: 'txn-4', score: 45, status: 'Review', time: '10:18:22', amount: '$350.00' },
-];
-
 function App() {
   const [token, setToken] = useState(localStorage.getItem('token') || null);
   const [username, setUsername] = useState('');
@@ -29,40 +12,49 @@ function App() {
 
   const [health, setHealth] = useState(null);
   const [modelInfo, setModelInfo] = useState(null);
-  const [transactions, setTransactions] = useState(initialTransactions);
+  const [transactions, setTransactions] = useState([]);
   const [txnId, setTxnId] = useState('');
   const [scoring, setScoring] = useState(false);
   const [scoreResult, setScoreResult] = useState(null);
+  const [dashboardStats, setDashboardStats] = useState(null);
+  const [chartData, setChartData] = useState([]);
 
   const logout = () => {
     setToken(null);
     localStorage.removeItem('token');
   };
 
-  // Fetch Health & Model Info
+  // Fetch Dashboard Data
   useEffect(() => {
     if (!token) return;
 
-    const fetchStatus = async () => {
+    const fetchDashboard = async () => {
       try {
         const headers = { 'Authorization': `Bearer ${token}` };
         
-        const [hRes, mRes] = await Promise.all([
+        const [hRes, mRes, statsRes, chartRes, txnRes] = await Promise.all([
           fetch('/api/v1/health', { headers }).catch(() => ({ ok: false })),
-          fetch('/api/v1/model-info', { headers }).catch(() => ({ ok: false }))
+          fetch('/api/v1/model-info', { headers }).catch(() => ({ ok: false })),
+          fetch('/api/v1/dashboard/stats', { headers }).catch(() => ({ ok: false })),
+          fetch('/api/v1/dashboard/chart-data', { headers }).catch(() => ({ ok: false })),
+          fetch('/api/v1/dashboard/recent-transactions', { headers }).catch(() => ({ ok: false }))
         ]);
         
-        if (hRes.status === 401 || mRes.status === 401) return logout();
+        if (hRes.status === 401) return logout();
 
         if (hRes.ok) setHealth(await hRes.json());
         if (mRes.ok) setModelInfo(await mRes.json());
+        if (statsRes.ok) setDashboardStats(await statsRes.json());
+        if (chartRes.ok) setChartData(await chartRes.json());
+        if (txnRes.ok) setTransactions(await txnRes.json());
       } catch (err) {
-        console.error("Failed to fetch system status", err);
+        console.error("Failed to fetch dashboard data", err);
       }
     };
-    fetchStatus();
-    // Refresh health every 30s
-    const intv = setInterval(fetchStatus, 30000);
+    
+    fetchDashboard();
+    // Auto-refresh every 30s
+    const intv = setInterval(fetchDashboard, 30000);
     return () => clearInterval(intv);
   }, [token]);
 
@@ -120,12 +112,12 @@ function App() {
         setTransactions(prev => [
           {
             id: txnId.substring(0, 8) + '...',
-            score: data.risk_score || 0,
+            score: data.risk_score * 100 || 0,
             status: data.is_fraud ? 'Flagged' : 'Approved',
             time: new Date().toLocaleTimeString(),
             amount: '---'
           },
-          ...prev.slice(0, 4)
+          ...prev.slice(0, 9)
         ]);
       }
     } catch (err) {
@@ -220,16 +212,16 @@ function App() {
         {/* Top Widgets */}
         <div className="grid grid-cols-3" style={{ marginBottom: '2rem' }}>
           <div className="card glass">
-            <h3 className="card-title"><Activity size={18} /> System Uptime</h3>
-            <div className="stat-value">{health ? `${Number(health.uptime_seconds).toFixed(1)}s` : '---'}</div>
+            <h3 className="card-title"><Activity size={18} /> Total Volume</h3>
+            <div className="stat-value">{dashboardStats ? `$${(dashboardStats.total_volume_usd/1000).toFixed(1)}k` : '---'}</div>
           </div>
           <div className="card glass">
-            <h3 className="card-title"><ShieldCheck size={18} /> Active Model F1</h3>
-            <div className="stat-value">{modelInfo?.metrics?.f1 ? Number(modelInfo.metrics.f1).toFixed(3) : '---'}</div>
+            <h3 className="card-title"><ShieldCheck size={18} /> Processed Txns</h3>
+            <div className="stat-value">{dashboardStats ? dashboardStats.total_transactions.toLocaleString() : '---'}</div>
           </div>
           <div className="card glass">
-            <h3 className="card-title"><ShieldAlert size={18} /> AUC ROC</h3>
-            <div className="stat-value">{modelInfo?.metrics?.roc_auc ? Number(modelInfo.metrics.roc_auc).toFixed(3) : '---'}</div>
+            <h3 className="card-title"><ShieldAlert size={18} /> Total Fraud Caught</h3>
+            <div className="stat-value" style={{color: 'var(--danger)'}}>{dashboardStats ? dashboardStats.total_fraud_caught.toLocaleString() : '---'}</div>
           </div>
         </div>
 
@@ -244,7 +236,7 @@ function App() {
               <h3 className="card-title"><Zap size={18} /> Risk Score Trends (Last 30 Mins)</h3>
               <div style={{ height: '300px', width: '100%' }}>
                 <ResponsiveContainer>
-                  <LineChart data={mockChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#2e3440" />
                     <XAxis dataKey="time" stroke="#a0a5b1" tick={{ fill: '#a0a5b1', fontSize: 12 }} />
                     <YAxis stroke="#a0a5b1" tick={{ fill: '#a0a5b1', fontSize: 12 }} domain={[0, 100]} />

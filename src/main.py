@@ -58,7 +58,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from config.settings import get_settings
-from src.api.routes import health_router, predict_router, auth_router
+from src.api.routes import health_router, predict_router, auth_router, dashboard_router
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -271,6 +271,7 @@ def create_app() -> FastAPI:
     app.include_router(predict_router, prefix=API_PREFIX)
     app.include_router(health_router, prefix=API_PREFIX)
     app.include_router(auth_router, prefix=API_PREFIX)
+    app.include_router(dashboard_router, prefix=API_PREFIX)
 
     # Serve the React Vite built frontend at /ui
     ui_dir = Path(__file__).parent.parent / "frontend" / "dist"
