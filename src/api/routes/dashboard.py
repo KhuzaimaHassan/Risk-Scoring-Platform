@@ -1,19 +1,18 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, func
-from sqlalchemy.orm import Session
-from src.database.session import get_db
+from src.api.dependencies import AsyncDBSession
 from src.database.models import FactTransaction, DimUser, PredictionLog
-from src.api.routes.auth import get_current_user
+from src.api.auth import get_current_user
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 @router.get("/stats")
-def get_dashboard_stats(db: Session = Depends(get_db), _: str = Depends(get_current_user)):
-    total_users = db.scalar(select(func.count(DimUser.user_id))) or 0
-    total_txns = db.scalar(select(func.count(FactTransaction.transaction_id))) or 0
-    fraud_txns = db.scalar(select(func.count(PredictionLog.log_id)).where(PredictionLog.risk_label == 1)) or 0
+async def get_dashboard_stats(db: AsyncDBSession, _: str = Depends(get_current_user)):
+    total_users = await db.scalar(select(func.count(DimUser.user_id))) or 0
+    total_txns = await db.scalar(select(func.count(FactTransaction.transaction_id))) or 0
+    fraud_txns = await db.scalar(select(func.count(PredictionLog.log_id)).where(PredictionLog.risk_label == 1)) or 0
     
-    total_volume = db.scalar(select(func.sum(FactTransaction.amount_usd))) or 0.0
+    total_volume = await db.scalar(select(func.sum(FactTransaction.amount_usd))) or 0.0
     
     return {
         "total_users": total_users,
@@ -23,13 +22,14 @@ def get_dashboard_stats(db: Session = Depends(get_db), _: str = Depends(get_curr
     }
 
 @router.get("/chart-data")
-def get_chart_data(db: Session = Depends(get_db), _: str = Depends(get_current_user)):
+async def get_chart_data(db: AsyncDBSession, _: str = Depends(get_current_user)):
     # Get last 20 predictions
-    preds = db.scalars(
+    preds_result = await db.scalars(
         select(PredictionLog)
         .order_by(PredictionLog.created_at.desc())
         .limit(20)
-    ).all()
+    )
+    preds = preds_result.all()
     
     chart_data = []
     # Reverse to show chronological left-to-right on chart
@@ -55,7 +55,7 @@ def get_chart_data(db: Session = Depends(get_db), _: str = Depends(get_current_u
     return chart_data
 
 @router.get("/recent-transactions")
-def get_recent_transactions(db: Session = Depends(get_db), _: str = Depends(get_current_user)):
+async def get_recent_transactions(db: AsyncDBSession, _: str = Depends(get_current_user)):
     # Get last 10 predictions joined with their fact_transaction
     query = (
         select(PredictionLog, FactTransaction.amount)
@@ -64,10 +64,10 @@ def get_recent_transactions(db: Session = Depends(get_db), _: str = Depends(get_
         .limit(10)
     )
     
-    results = db.execute(query).all()
+    results = await db.execute(query)
     
     recent = []
-    for pred, amount in results:
+    for pred, amount in results.all():
         recent.append({
             "id": str(pred.transaction_id)[:8] + "...",
             "score": round(pred.fraud_score * 100, 2),
