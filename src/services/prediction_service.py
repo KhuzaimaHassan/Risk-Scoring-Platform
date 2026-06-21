@@ -349,14 +349,16 @@ class PredictionService:
         scored_at  = datetime.now(timezone.utc)
 
         # ── Step 7: Log prediction (best-effort — failures are logged) ────
-        feature_snapshot = feature_df.iloc[0].to_dict() if include_features else None
+        import json
+        feature_dict = json.loads(feature_df.iloc[0].to_json())
+        feature_snapshot = feature_dict if include_features else None
         log_id = await self._log_prediction_safe(
             db=db,
             transaction_id=transaction_id,
             fraud_prob=fraud_prob,
             is_fraud=is_fraud,
             latency_ms=latency_ms,
-            feature_snapshot=feature_df.iloc[0].to_dict(),  # Always log features
+            feature_snapshot=feature_dict,  # Always log features
         )
 
         logger.info(
