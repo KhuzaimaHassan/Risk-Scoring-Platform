@@ -62,6 +62,25 @@ Example request:
 }
 ```
 
+## Recent Enhancements (Step 2 Complete)
+
+### Real-Time Dashboard Integration
+The React UI (`frontend/src/App.jsx`) has been fully integrated with live backend data, replacing all hardcoded mock data.
+- **KPIs**: Added `Total Volume`, `Processed Txns`, and `Total Fraud Caught` metrics.
+- **Risk Score Trends**: Interactive `Recharts` graph plotting the latest model predictions over time.
+- **Recent Transactions Feed**: Live scrolling table showing the latest transactions, amounts, and their fraud risk scores.
+- **Auto-Refresh**: Dashboard polls the backend every 30 seconds for live updates.
+
+### Backend Dashboard Endpoints (`src/api/routes/dashboard.py`)
+- `GET /api/v1/dashboard/stats`: Returns aggregated KPIs.
+- `GET /api/v1/dashboard/chart-data`: Returns the 20 most recent predictions for time-series plotting.
+- `GET /api/v1/dashboard/recent-transactions`: Returns the 10 latest transactions joined with prediction outcomes.
+
+### Production Deployment Fixes
+- **Database Connection Resilience**: Added `pool_pre_ping=True` and `pool_recycle=300` to the SQLAlchemy `async_engine` to gracefully handle Supabase PgBouncer connection drops.
+- **PostgreSQL Enum Case Sensitivity**: Fixed a bug where the prediction service failed to query historical transactions because the `txn_status_enum` in the hosted Supabase database expected uppercase values (`COMPLETED`) while the codebase used lowercase strings.
+- **Global Error Handling**: Upgraded the FastAPI generic exception handler to output full Python tracebacks in the JSON response to assist with debugging deployed instances.
+
 ## Local Setup
 
 ### 1) Create and activate virtualenv
