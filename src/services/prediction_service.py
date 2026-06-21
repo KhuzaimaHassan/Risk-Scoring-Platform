@@ -102,7 +102,7 @@ async def _fetch_user_history(
         WHERE  user_id = :uid
           AND  txn_timestamp < :upper
           AND  txn_timestamp >= :lower
-          AND  status = 'completed'
+          AND  status = 'COMPLETED'
         ORDER  BY txn_timestamp ASC
     """)
     result = await db.execute(sql, {
@@ -135,7 +135,7 @@ async def _fetch_merchant_history(
         WHERE  merchant_id = :mid
           AND  txn_timestamp < :upper
           AND  txn_timestamp >= :lower
-          AND  status = 'completed'
+          AND  status = 'COMPLETED'
         ORDER  BY txn_timestamp ASC
     """)
     result = await db.execute(sql, {
