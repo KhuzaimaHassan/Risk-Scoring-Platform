@@ -227,11 +227,12 @@ def create_app() -> FastAPI:
     ) -> JSONResponse:
         """Catch-all: log the exception and return a generic 500."""
         logger.exception("Unhandled exception on %s %s: %s", request.method, request.url, exc)
+        import traceback
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={
                 "error": "internal_server_error",
-                "detail": "An unexpected error occurred. Check server logs.",
+                "detail": f"An unexpected error occurred. {repr(exc)} - {traceback.format_exc()}",
             },
         )
 
