@@ -37,6 +37,8 @@ import pandas as pd
 RAW_FEATURE_NAMES: list[str] = [
     # Transaction-level
     "amount_usd",
+    "amount_original",
+    "fx_rate",
     "is_international",
     "is_online_merchant",
     # Temporal
@@ -79,6 +81,11 @@ _RISK_LEVEL_CODES: dict[str, int] = {
 # ---------------------------------------------------------------------------
 # Public extraction functions
 # ---------------------------------------------------------------------------
+
+def _enum_value(value):
+    value = str(getattr(value, "value", value)).rsplit(".", 1)[-1].lower()
+    return "bnpl" if value == "buy_now_pay_later" else value
+
 
 def extract_temporal_features(txn_timestamp: datetime) -> dict[str, Any]:
     """
@@ -124,10 +131,12 @@ def extract_transaction_features(txn: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "amount_usd": float(txn.get("amount_usd", 0.0)),
+        "amount_original": float(txn.get("amount", txn.get("amount_usd", 0.0))),
+        "fx_rate": float(txn.get("amount_usd", 0.0)) / max(float(txn.get("amount", txn.get("amount_usd", 0.0))), 1e-9),
         "is_international": int(bool(txn.get("is_international", False))),
-        "channel_code": _CHANNEL_CODES.get(str(txn.get("channel", "web")), 0),
+        "channel_code": _CHANNEL_CODES.get(_enum_value(txn.get("channel", "web")), 0),
         "payment_method_code": _PAYMENT_METHOD_CODES.get(
-            str(txn.get("payment_method", "credit_card")), 0
+            _enum_value(txn.get("payment_method", "credit_card")), 0
         ),
         **temporal,
     }
@@ -160,7 +169,7 @@ def extract_user_features(user: dict[str, Any]) -> dict[str, Any]:
     return {
         "user_account_age_days": acct_age,
         "user_risk_tier_code": _RISK_TIER_CODES.get(
-            str(user.get("risk_tier", "medium")), 1
+            _enum_value(user.get("risk_tier", "medium")), 1
         ),
         "user_credit_score": credit_score,
         "user_kyc_verified": int(bool(user.get("kyc_verified", False))),
@@ -183,7 +192,7 @@ def extract_merchant_features(merchant: dict[str, Any]) -> dict[str, Any]:
     return {
         "is_online_merchant": int(bool(merchant.get("is_online_only", False))),
         "merchant_risk_level_code": _RISK_LEVEL_CODES.get(
-            str(merchant.get("risk_level", "medium")), 1
+            _enum_value(merchant.get("risk_level", "medium")), 1
         ),
         "merchant_historical_fraud_rate": float(
             merchant.get("historical_fraud_rate", 0.0)

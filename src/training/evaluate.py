@@ -175,6 +175,19 @@ def find_optimal_threshold(
         raise ValueError(f"optimise_for must be 'f1', 'recall', or 'precision'. Got: {optimise_for!r}")
 
 
+def find_operating_threshold(y_true, y_prob, min_recall=0.75):
+    """Maximise validation F1 subject to an explicit fraud-recall target."""
+    precision, recall, thresholds = precision_recall_curve(y_true, y_prob)
+    if not len(thresholds):
+        raise ValueError("No candidate operating thresholds")
+    eligible = recall[:-1] >= min_recall
+    if not eligible.any():
+        raise ValueError("Validation data cannot meet the recall target")
+    scores = 2 * precision[:-1] * recall[:-1] / np.maximum(precision[:-1] + recall[:-1], 1e-12)
+    candidates = np.flatnonzero(eligible)
+    return float(thresholds[candidates[np.argmax(scores[eligible])]])
+
+
 def compute_roc_curve_data(
     y_true: np.ndarray,
     y_prob: np.ndarray,

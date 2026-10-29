@@ -1,88 +1,79 @@
-from fastapi import APIRouter, Depends
+"""Authenticated dashboard data; empty databases return empty results."""
+from datetime import datetime, timedelta, timezone
+from uuid import UUID
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from src.api.dependencies import AsyncDBSession
 from src.database.models import FactTransaction, DimUser, PredictionLog
 from src.api.auth import get_current_user
 
-router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
+router = APIRouter(prefix="/dashboard", tags=["Dashboard"], dependencies=[Depends(get_current_user)])
+
+def latest_predictions():
+    return select(PredictionLog.log_id, PredictionLog.transaction_id, PredictionLog.risk_label,
+        func.row_number().over(partition_by=PredictionLog.transaction_id,
+            order_by=(PredictionLog.created_at.desc(), PredictionLog.log_id.desc())).label("rank")).subquery()
 
 @router.get("/stats")
-async def get_dashboard_stats(db: AsyncDBSession, _: str = Depends(get_current_user)):
-    total_users = await db.scalar(select(func.count(DimUser.user_id))) or 0
-    total_txns = await db.scalar(select(func.count(FactTransaction.transaction_id))) or 0
-    fraud_txns = await db.scalar(select(func.count(PredictionLog.log_id)).where(PredictionLog.risk_label == 1)) or 0
-    
-    total_volume = await db.scalar(select(func.sum(FactTransaction.amount_usd))) or 0.0
-    
-    return {
-        "total_users": total_users,
-        "total_transactions": total_txns,
-        "total_fraud_caught": fraud_txns,
-        "total_volume_usd": float(total_volume)
-    }
+async def get_dashboard_stats(db: AsyncDBSession):
+    latest = latest_predictions()
+    scored = select(latest.c.transaction_id, latest.c.risk_label).where(latest.c.rank == 1).subquery()
+    result = (await db.execute(select(
+        select(func.count()).select_from(DimUser).scalar_subquery().label("total_users"),
+        select(func.count()).select_from(FactTransaction).scalar_subquery().label("stored_transactions"),
+        select(func.count()).select_from(scored).scalar_subquery().label("total_transactions"),
+        select(func.count()).select_from(scored).where(scored.c.risk_label == 1).scalar_subquery().label("flagged_transactions"),
+        select(func.count()).select_from(scored).join(FactTransaction, FactTransaction.transaction_id == scored.c.transaction_id)
+            .where(scored.c.risk_label == 1, FactTransaction.fraud_label == 1,
+                   FactTransaction.labelled_at <= datetime.now(timezone.utc)).scalar_subquery().label("total_fraud_caught"),
+        select(func.coalesce(func.sum(FactTransaction.amount_usd), 0)).select_from(FactTransaction)
+            .join(scored, scored.c.transaction_id == FactTransaction.transaction_id).scalar_subquery().label("total_volume_usd")
+    ))).mappings().one()
+    return {**dict(result), "total_volume_usd": float(result["total_volume_usd"])}
 
 @router.get("/chart-data")
-async def get_chart_data(db: AsyncDBSession, _: str = Depends(get_current_user)):
-    # Get last 20 predictions
-    preds_result = await db.scalars(
-        select(PredictionLog)
-        .order_by(PredictionLog.created_at.desc())
-        .limit(20)
-    )
-    preds = preds_result.all()
-    
-    chart_data = []
-    # Reverse to show chronological left-to-right on chart
-    for p in reversed(preds):
-        time_str = p.created_at.strftime("%H:%M:%S")
-        chart_data.append({
-            "time": time_str,
-            "score": round(p.fraud_score * 100, 2)
-        })
-        
-    # If no data, return some fallback mock data
-    if not chart_data:
-        chart_data = [
-            {"time": "10:00", "score": 12},
-            {"time": "10:05", "score": 25},
-            {"time": "10:10", "score": 15},
-            {"time": "10:15", "score": 45},
-            {"time": "10:20", "score": 85},
-            {"time": "10:25", "score": 20},
-            {"time": "10:30", "score": 35},
-        ]
-        
-    return chart_data
+async def get_chart_data(db: AsyncDBSession):
+    since = datetime.now(timezone.utc) - timedelta(minutes=30)
+    preds = (await db.scalars(select(PredictionLog).where(PredictionLog.created_at >= since)
+        .order_by(PredictionLog.created_at.desc()).limit(200))).all()
+    return [{"time": p.created_at.isoformat(), "score": round(float(p.fraud_score) * 100, 2)} for p in reversed(preds)]
 
 @router.get("/recent-transactions")
-async def get_recent_transactions(db: AsyncDBSession, _: str = Depends(get_current_user)):
-    # Get last 10 predictions joined with their fact_transaction
-    query = (
-        select(PredictionLog, FactTransaction.amount)
+async def get_recent_transactions(db: AsyncDBSession):
+    rows = (await db.execute(select(PredictionLog, FactTransaction.amount_usd)
         .join(FactTransaction, PredictionLog.transaction_id == FactTransaction.transaction_id)
-        .order_by(PredictionLog.created_at.desc())
-        .limit(10)
-    )
-    
-    results = await db.execute(query)
-    
-    recent = []
-    for pred, amount in results.all():
-        recent.append({
-            "id": str(pred.transaction_id)[:8] + "...",
-            "score": round(pred.fraud_score * 100, 2),
-            "status": "Flagged" if pred.risk_label == 1 else "Approved",
-            "time": pred.created_at.strftime("%H:%M:%S"),
-            "amount": f"${float(amount):.2f}"
-        })
-        
-    # If no data, return mock data
-    if not recent:
-        recent = [
-            { "id": 'txn-1', "score": 85, "status": 'Flagged', "time": '10:20:15', "amount": '$1,200.00' },
-            { "id": 'txn-2', "score": 12, "status": 'Approved', "time": '10:20:12', "amount": '$45.00' },
-            { "id": 'txn-3', "score": 25, "status": 'Approved', "time": '10:19:45', "amount": '$89.99' },
-            { "id": 'txn-4', "score": 45, "status": 'Review', "time": '10:18:22', "amount": '$350.00' },
-        ]
-        
-    return recent
+        .order_by(PredictionLog.created_at.desc()).limit(10))).all()
+    return [{"id": str(p.transaction_id), "log_id": str(p.log_id), "score": round(float(p.fraud_score)*100, 2),
+             "status": "Flagged" if p.risk_label else "Approved", "time": p.created_at.isoformat(),
+             "amount_usd": float(amount), "currency": "USD"} for p, amount in rows]
+
+@router.get("/transactions")
+async def available_transactions(db: AsyncDBSession, limit: int = Query(20, ge=1, le=100)):
+    rows = (await db.execute(select(FactTransaction.transaction_id, FactTransaction.amount_usd, FactTransaction.txn_timestamp)
+        .order_by(FactTransaction.txn_timestamp.desc()).limit(limit))).all()
+    return [{"id": str(tid), "amount_usd": float(amount), "time": ts.isoformat()} for tid, amount, ts in rows]
+
+@router.get("/review-queue")
+async def review_queue(db: AsyncDBSession):
+    latest = latest_predictions()
+    rows = (await db.execute(select(PredictionLog, FactTransaction.amount_usd).join(latest,
+        latest.c.log_id == PredictionLog.log_id).join(FactTransaction,
+        FactTransaction.transaction_id == PredictionLog.transaction_id).where(latest.c.rank == 1,
+        PredictionLog.risk_label == 1, PredictionLog.is_reviewed.is_(False))
+        .order_by(PredictionLog.created_at.desc()).limit(50))).all()
+    return [{"id": str(p.transaction_id), "log_id": str(p.log_id), "score": float(p.fraud_score)*100,
+             "time": p.created_at.isoformat(), "amount_usd": float(amount)} for p, amount in rows]
+
+class ReviewRequest(BaseModel):
+    notes: str = Field(default="", max_length=2000)
+
+@router.post("/reviews/{log_id}")
+async def mark_reviewed(log_id: UUID, payload: ReviewRequest, db: AsyncDBSession, user: str = Depends(get_current_user)):
+    prediction = await db.get(PredictionLog, log_id)
+    if prediction is None:
+        raise HTTPException(404, "Prediction not found")
+    prediction.is_reviewed = True
+    prediction.reviewer_notes = f"{user}: {payload.notes}"
+    await db.commit()
+    return {"log_id": str(log_id), "is_reviewed": True}

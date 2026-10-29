@@ -36,3 +36,8 @@ models/metadata_*.json
 Thumbs.db
 .vscode/
 .idea/
+
+# Curated model verified against feature schema v2
+!models/model_v20261029_production.pkl
+!models/metadata_v20261029_production.json
+!reports/eval_v20261029_production.json

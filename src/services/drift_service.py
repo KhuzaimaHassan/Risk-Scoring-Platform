@@ -1,116 +1,81 @@
-"""
-src/services/drift_service.py
-------------------------------
-Background service for reconciling ground truth, computing F1 scores over
-recent predictions, and triggering automated retraining if performance drops.
-"""
-
-import logging
+"""Ground-truth reconciliation and guarded, version-specific retraining."""
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
-from sqlalchemy import select, update, func, Float, case
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from sqlalchemy import select, func
+from config.settings import get_settings
 from src.database.session import AsyncSessionFactory
-from src.database.models.prediction_log import PredictionLog, PredictionOutcome
-from src.database.models.fact_transaction import FactTransaction
-from src.training.train import train, TrainConfig
+from src.database.models import PredictionLog, PredictionOutcome, FactTransaction
+from src.training.train import train, load_train_config
+from src.services.model_state import load_bundle
 
 logger = logging.getLogger(__name__)
 
 async def reconcile_ground_truth():
-    """
-    Match prediction logs with their ground-truth fraud labels from fact_transaction.
-    If a transaction has been updated with a fraud_label, update the PredictionLog outcome.
-    """
-    try:
-        async with AsyncSessionFactory() as db:
-            # 1. Find all PredictionLogs where outcome is UNKNOWN
-            stmt = select(PredictionLog, FactTransaction.fraud_label).join(
-                FactTransaction, PredictionLog.transaction_id == FactTransaction.transaction_id
-            ).where(
-                PredictionLog.outcome == PredictionOutcome.UNKNOWN,
-                FactTransaction.fraud_label.is_not(None)
-            )
-            
-            result = await db.execute(stmt)
-            rows = result.fetchall()
-            
-            if not rows:
-                return 0
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionFactory() as db:
+        rows = (await db.execute(select(PredictionLog, FactTransaction.fraud_label).join(
+            FactTransaction, PredictionLog.transaction_id == FactTransaction.transaction_id).where(
+            PredictionLog.outcome == PredictionOutcome.UNKNOWN, FactTransaction.fraud_label.is_not(None),
+            FactTransaction.labelled_at <= now).limit(1000))).all()
+        for prediction, label in rows:
+            prediction.outcome = {(1, 1): PredictionOutcome.TRUE_POSITIVE, (0, 0): PredictionOutcome.TRUE_NEGATIVE,
+                                  (1, 0): PredictionOutcome.FALSE_POSITIVE, (0, 1): PredictionOutcome.FALSE_NEGATIVE}[(prediction.risk_label, label)]
+            prediction.outcome_resolved_at = now
+        await db.commit()
+    return len(rows)
 
-            updated_count = 0
-            for pred_log, ground_truth in rows:
-                pred_label = pred_log.risk_label
-                if pred_label == 1 and ground_truth == 1:
-                    outcome = PredictionOutcome.TRUE_POSITIVE
-                elif pred_label == 0 and ground_truth == 0:
-                    outcome = PredictionOutcome.TRUE_NEGATIVE
-                elif pred_label == 1 and ground_truth == 0:
-                    outcome = PredictionOutcome.FALSE_POSITIVE
-                else:
-                    outcome = PredictionOutcome.FALSE_NEGATIVE
-                
-                pred_log.outcome = outcome
-                pred_log.outcome_resolved_at = datetime.now(timezone.utc)
-                updated_count += 1
-                
-            await db.commit()
-            if updated_count > 0:
-                logger.info("Reconciled %d predictions with ground truth.", updated_count)
-            return updated_count
-    except Exception as e:
-        logger.error("Failed to reconcile ground truth: %s", str(e))
-        return 0
-
-async def check_drift_and_retrain():
-    """
-    Calculate the F1 score for predictions over the last 24 hours.
-    If the F1 score falls below 0.70 (or there are many False Positives/Negatives),
-    trigger the model retraining pipeline.
-    """
+async def check_drift_and_retrain(app):
+    settings = get_settings()
+    bundle = getattr(app.state, "model_bundle", None)
+    if bundle is None:
+        return
     try:
-        # Step 1: Reconcile any missing ground truth first
         await reconcile_ground_truth()
-        
+        now = datetime.now(timezone.utc)
+        last = app.state.last_retraining_attempt
+        if last and now - last < timedelta(hours=settings.retraining_cooldown_hours):
+            return
         async with AsyncSessionFactory() as db:
-            # Look at predictions from the last 24 hours
-            since_time = datetime.now(timezone.utc) - timedelta(hours=24)
-            
-            stmt = select(
-                func.sum(case((PredictionLog.outcome == PredictionOutcome.TRUE_POSITIVE, 1), else_=0)).label("tp"),
-                func.sum(case((PredictionLog.outcome == PredictionOutcome.FALSE_POSITIVE, 1), else_=0)).label("fp"),
-                func.sum(case((PredictionLog.outcome == PredictionOutcome.FALSE_NEGATIVE, 1), else_=0)).label("fn")
-            ).where(
-                PredictionLog.outcome != PredictionOutcome.UNKNOWN,
-                PredictionLog.outcome_resolved_at >= since_time
-            )
-            
-            result = await db.execute(stmt)
-            row = result.fetchone()
-            
-            tp = row.tp or 0
-            fp = row.fp or 0
-            fn = row.fn or 0
-            
-            if tp == 0 and fp == 0 and fn == 0:
+            counts = dict((await db.execute(select(PredictionLog.outcome, func.count()).where(
+                PredictionLog.model_version == bundle.version,
+                PredictionLog.created_at >= now - timedelta(hours=settings.monitoring_window_hours),
+                PredictionLog.outcome != PredictionOutcome.UNKNOWN).group_by(PredictionLog.outcome))).all())
+            tp = counts.get(PredictionOutcome.TRUE_POSITIVE, 0)
+            fp = counts.get(PredictionOutcome.FALSE_POSITIVE, 0)
+            fn = counts.get(PredictionOutcome.FALSE_NEGATIVE, 0)
+            if tp + fp + fn < 30 or 2 * tp / max(2 * tp + fp + fn, 1) >= settings.performance_f1_min_threshold:
                 return
-                
-            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-            f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-            
-            # Threshold check
-            if f1_score < 0.70 and (tp + fp + fn) > 10:  # Need at least 10 flagged transactions to be statistically relevant
-                logger.warning("Data drift detected! F1 score (%.3f) fell below threshold (0.70). Initiating automated retraining...", f1_score)
-                
-                # We offload the blocking model training to a separate thread so we don't block the asyncio event loop
-                cfg = TrainConfig(auto_promote=True, description="Auto-retrained due to F1 drift")
-                loop = asyncio.get_running_loop()
-                # Run the blocking training in a thread pool
-                training_result = await loop.run_in_executor(None, train, cfg)
-                
-                logger.info("Automated retraining completed successfully! New model version %s deployed.", training_result['version'])
-
-    except Exception as e:
-        logger.error("Drift detection encountered an error: %s", str(e))
+            samples = await db.scalar(select(func.count()).select_from(FactTransaction).where(
+                FactTransaction.fraud_label.is_not(None), FactTransaction.labelled_at < now))
+            if samples < settings.retraining_min_samples:
+                return
+        app.state.last_retraining_attempt = now
+        cfg = load_train_config()
+        cfg.train_until = now
+        cfg.auto_promote = False
+        cfg.model_artifact_dir = settings.model_artifact_dir
+        cfg.report_dir = settings.model_report_dir
+        cfg.min_f1, cfg.min_recall = settings.model_min_f1, settings.model_min_recall
+        result = await asyncio.to_thread(train, cfg)
+        if not settings.retraining_auto_promote or not result["quality_gate_passed"]:
+            return
+        # Re-evaluate the incumbent on the candidate's identical holdout, never compare different datasets.
+        from src.training.evaluate import compute_binary_metrics
+        def incumbent_metrics():
+            X_test, y_test = result["_evaluation_data"]
+            return compute_binary_metrics(y_test.to_numpy(), bundle.model.predict_proba(X_test)[:, 1], bundle.threshold)
+        incumbent = await asyncio.to_thread(incumbent_metrics)
+        if result["metrics"]["f1"] <= incumbent["f1"] or result["metrics"]["recall"] < incumbent["recall"]:
+            return
+        from src.training.model_registry import ModelRegistry
+        registry = ModelRegistry(settings.model_artifact_dir)
+        registry.promote_model(result["version"], promoted_by="guarded-retraining")
+        try:
+            app.state.model_bundle = await asyncio.to_thread(load_bundle, settings.model_artifact_dir)
+        except Exception:
+            registry.promote_model(bundle.version, promoted_by="reload-rollback")
+            raise
+        logger.info("Serving retrained model %s", result["version"])
+    except Exception:
+        logger.exception("Monitoring/retraining failed; current serving model preserved")

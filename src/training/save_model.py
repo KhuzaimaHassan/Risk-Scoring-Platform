@@ -105,12 +105,14 @@ def save_model(
     # --- Write metadata JSON ---
     metadata: dict[str, Any] = {
         "version": version,
+        "feature_schema_version": 2,
+        "threshold_selection": "chronological_validation",
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "description": description,
         "framework": "sklearn",
         "framework_version": _sklearn_version(),
         "python_version": platform.python_version(),
-        "artifact_path": str(artifact_path.resolve()),
+        "artifact_path": str(artifact_path),
         "artifact_size_bytes": artifact_size,
         "training_rows": training_rows,
         "training_duration_s": round(training_duration_s, 3),

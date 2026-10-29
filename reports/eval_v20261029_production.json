@@ -1,0 +1,42 @@
+{
+  "threshold_selection": "chronological_validation",
+  "validation_recall_target": 0.6,
+  "validation_samples": 1141,
+  "test_samples": 815,
+  "validation_metrics": {
+    "roc_auc": 0.82853,
+    "pr_auc": 0.562354,
+    "f1": 0.394737,
+    "precision": 0.294118,
+    "recall": 0.6,
+    "specificity": 0.967742,
+    "threshold_used": 0.15826714653647353,
+    "confusion_matrix": {
+      "tp": 15,
+      "tn": 1080,
+      "fp": 36,
+      "fn": 10
+    },
+    "support_fraud": 25,
+    "support_legit": 1116,
+    "class_imbalance_ratio": 44.64
+  },
+  "default_threshold_metrics": {
+    "roc_auc": 0.80805,
+    "pr_auc": 0.339305,
+    "f1": 0.333333,
+    "precision": 0.25,
+    "recall": 0.5,
+    "specificity": 0.962264,
+    "threshold_used": 0.15826714653647353,
+    "confusion_matrix": {
+      "tp": 10,
+      "tn": 765,
+      "fp": 30,
+      "fn": 10
+    },
+    "support_fraud": 20,
+    "support_legit": 795,
+    "class_imbalance_ratio": 39.75
+  }
+}

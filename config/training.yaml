@@ -11,12 +11,12 @@ model:
 
 random_forest:
   n_estimators: 300           # Number of trees — higher = more stable, slower
-  max_depth: 20               # Max tree depth; null = unlimited (risk of overfitting)
-  min_samples_split: 10       # Minimum samples to split an internal node
-  min_samples_leaf: 4         # Minimum samples in a leaf (controls overfitting)
+  max_depth: 12               # Max tree depth; null = unlimited (risk of overfitting)
+  min_samples_split: 4       # Minimum samples to split an internal node
+  min_samples_leaf: 2         # Minimum samples in a leaf (controls overfitting)
   max_features: "sqrt"        # Features per split: "sqrt" | "log2" | float
-  class_weight: "balanced"    # Handles class imbalance without resampling
-  n_jobs: -1                  # Use all available CPU cores
+  class_weight: "balanced_subsample"    # Handles class imbalance without resampling
+  n_jobs: 1                  # Use all available CPU cores
   random_state: 42
   bootstrap: true
   oob_score: true             # Enable out-of-bag scoring (free validation estimate)
@@ -36,3 +36,7 @@ retraining:
   trigger_on_psi_above: 0.20
   min_samples_required: 10000
   auto_promote: false         # Require manual promotion after retrain
+
+validation:
+  size: 0.35
+  recall_target: 0.60

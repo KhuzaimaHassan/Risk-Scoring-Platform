@@ -41,6 +41,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from src.features.feature_pipeline import FEATURE_COLUMNS, FeaturePipeline
+from config.settings import get_settings
+from src.training.evaluate import find_operating_threshold, compute_binary_metrics
 from src.training.evaluate import evaluate_model, save_evaluation_report
 from src.training.model_registry import ModelRegistry
 from src.training.save_model import generate_version_tag, save_model
@@ -64,12 +66,12 @@ class TrainConfig:
 
     # RandomForest hyperparameters
     n_estimators: int = 300
-    max_depth: int | None = 20
-    min_samples_split: int = 10
-    min_samples_leaf: int = 4
+    max_depth: int | None = 12
+    min_samples_split: int = 4
+    min_samples_leaf: int = 2
     max_features: str = "sqrt"
-    class_weight: str = "balanced"
-    n_jobs: int = -1
+    class_weight: str = "balanced_subsample"
+    n_jobs: int = 1
     random_state: int = 42
     bootstrap: bool = True
     oob_score: bool = True
@@ -96,6 +98,10 @@ class TrainConfig:
 
     # Description / notes for this run
     description: str = ""
+    validation_size: float = 0.35
+    min_recall: float = 0.5
+    min_f1: float = 0.2
+    validation_recall_target: float = 0.60
 
 
 def load_train_config(config_path: Path | str = "config/training.yaml") -> TrainConfig:
@@ -151,6 +157,10 @@ def load_train_config(config_path: Path | str = "config/training.yaml") -> Train
         cfg.decision_threshold = float(thresh["decision"])
     if "precision_recall_tradeoff" in thresh:
         cfg.optimise_threshold_for = str(thresh["precision_recall_tradeoff"])
+
+    validation = raw.get("validation", {})
+    cfg.validation_size = float(validation.get("size", cfg.validation_size))
+    cfg.validation_recall_target = float(validation.get("recall_target", cfg.validation_recall_target))
 
     # Retraining section
     retrain = raw.get("retraining", {})
@@ -321,7 +331,7 @@ def train(
 
     # ── Step 1: Load feature matrix ─────────────────────────────────────
     logger.info("[1/6] Loading feature matrix from FeaturePipeline …")
-    pipeline = FeaturePipeline(lookback_days=7)
+    pipeline = FeaturePipeline(lookback_days=30)
     X, y = pipeline.build_training_dataset(
         since=cfg.train_since,
         until=cfg.train_until,
@@ -357,6 +367,11 @@ def train(
     else:
         raise ValueError(f"Unknown split_strategy: '{cfg.split_strategy}'")
 
+    # Reserve validation strictly before the untouched final test period.
+    X_train, X_val, y_train, y_val = time_aware_split(X_train, y_train, cfg.validation_size)
+    if min(len(X_train), len(X_val), len(X_test)) < 20 or any(v.nunique() < 2 for v in (y_train, y_val, y_test)):
+        raise RuntimeError("Chronological train/validation/test partitions each require both classes and at least 20 rows")
+
     # ── Step 3: Build model pipeline ─────────────────────────────────────
     logger.info("[3/6] Building model pipeline …")
     model = build_model_pipeline(cfg)
@@ -379,14 +394,18 @@ def train(
 
     # ── Step 5: Evaluate ─────────────────────────────────────────────────
     logger.info("[5/6] Evaluating on %d test samples …", len(X_test))
-    eval_report = evaluate_model(
-        model=model,
-        X_test=X_test,
-        y_test=y_test,
-        feature_columns=FEATURE_COLUMNS,
-        threshold=cfg.decision_threshold,
-        optimise_threshold_for=cfg.optimise_threshold_for,
-    )
+    val_probs = model.predict_proba(X_val)[:, 1]
+    selected_threshold = find_operating_threshold(y_val.to_numpy(), val_probs, cfg.validation_recall_target)
+    selected_threshold = min(.999999, max(.000001, float(selected_threshold)))
+    validation_metrics = compute_binary_metrics(y_val.to_numpy(), val_probs, threshold=selected_threshold)
+    test_metrics = compute_binary_metrics(y_test.to_numpy(), model.predict_proba(X_test)[:, 1], threshold=selected_threshold)
+    eval_report = {
+        "threshold_selection": "chronological_validation",
+        "validation_recall_target": cfg.validation_recall_target,
+        "validation_samples": len(X_val), "test_samples": len(X_test),
+        "validation_metrics": {k: v for k, v in validation_metrics.items() if k != "classification_report"},
+        "default_threshold_metrics": {k: v for k, v in test_metrics.items() if k != "classification_report"},
+    }
 
     # Persist evaluation report
     report_path = cfg.report_dir / f"eval_{version}.json"
@@ -443,7 +462,8 @@ def train(
 
     # Auto-promote to production if configured
     promoted = False
-    if cfg.auto_promote:
+    passes_quality = all(m.get("recall", 0) >= cfg.min_recall and m.get("f1", 0) >= cfg.min_f1 for m in (summary_metrics, validation_metrics))
+    if cfg.auto_promote and passes_quality:
         registry.promote_model(version, stage="production", promoted_by="train.py[auto]")
         promoted = True
         logger.info("Auto-promoted '%s' to production.", version)
@@ -472,5 +492,9 @@ def train(
         "metrics": summary_metrics,
         "eval_report_path": str(report_path),
         "promoted": promoted,
+        "quality_gate_passed": passes_quality,
+        "validation_samples": len(X_val),
+        "test_samples": len(X_test),
+        "_evaluation_data": (X_test, y_test),
         "registry_summary": registry.summary(),
     }

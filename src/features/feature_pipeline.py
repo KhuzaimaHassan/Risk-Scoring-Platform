@@ -78,7 +78,10 @@ settings = get_settings()
 #: The canonical ordered list of all feature columns in the output DataFrame.
 #: Training and inference MUST always return columns in this exact order.
 #: The model registry stores this list alongside model artifacts.
-FEATURE_COLUMNS: list[str] = RAW_FEATURE_NAMES + AGGREGATED_FEATURE_NAMES
+FEATURE_SCHEMA_VERSION = 2
+# Profile snapshots are not stored, so mutable profile fields cannot be used as-of an event.
+_EXCLUDED = {"user_account_age_days", "user_risk_tier_code", "user_credit_score", "user_kyc_verified", "merchant_risk_level_code"}
+FEATURE_COLUMNS: list[str] = [c for c in RAW_FEATURE_NAMES if c not in _EXCLUDED] + AGGREGATED_FEATURE_NAMES
 
 #: Target label column name for training
 TARGET_COLUMN: str = "fraud_label"
@@ -161,7 +164,7 @@ def _load_full_transaction_table(
             ft.channel,
             ft.payment_method,
             ft.is_international,
-            ft.fraud_label,
+            ft.fraud_label, ft.labelled_at,
             -- User dimension (snapshot at query time)
             du.account_age_days            AS user_account_age_days,
             du.risk_tier                   AS user_risk_tier,
@@ -179,7 +182,7 @@ def _load_full_transaction_table(
         FROM   fact_transaction ft
         JOIN   dim_user     du ON du.user_id     = ft.user_id
         JOIN   dim_merchant dm ON dm.merchant_id = ft.merchant_id
-        WHERE  ft.status = 'completed'
+        WHERE  upper(ft.status::text) = 'COMPLETED'
                {label_clause}
                {since_clause}
         ORDER  BY ft.txn_timestamp ASC
@@ -227,7 +230,7 @@ def _get_single_transaction(
             ft.transaction_id, ft.user_id, ft.merchant_id,
             ft.txn_timestamp, ft.amount_usd, ft.amount, ft.currency,
             ft.status, ft.channel, ft.payment_method, ft.is_international,
-            ft.fraud_label,
+            ft.fraud_label, ft.labelled_at,
             du.account_age_days            AS user_account_age_days,
             du.risk_tier                   AS user_risk_tier,
             du.credit_score                AS user_credit_score,
@@ -291,12 +294,12 @@ def _get_user_history(
     """
     cutoff_lower = before_ts - timedelta(days=lookback_days)
     sql = text("""
-        SELECT txn_timestamp, amount_usd, fraud_label
+        SELECT txn_timestamp, amount_usd, fraud_label, labelled_at
         FROM   fact_transaction
         WHERE  user_id  = :user_id
           AND  txn_timestamp < :upper
           AND  txn_timestamp >= :lower
-          AND  status = 'completed'
+          AND  upper(status::text) = 'COMPLETED'
         ORDER  BY txn_timestamp ASC
     """)
     result = db_session.execute(sql, {
@@ -322,12 +325,12 @@ def _get_merchant_history(
     """
     cutoff_lower = before_ts - timedelta(days=lookback_days)
     sql = text("""
-        SELECT txn_timestamp, amount_usd, fraud_label
+        SELECT txn_timestamp, amount_usd, fraud_label, labelled_at
         FROM   fact_transaction
         WHERE  merchant_id = :merchant_id
           AND  txn_timestamp < :upper
           AND  txn_timestamp >= :lower
-          AND  status = 'completed'
+          AND  upper(status::text) = 'COMPLETED'
         ORDER  BY txn_timestamp ASC
     """)
     result = db_session.execute(sql, {
@@ -367,6 +370,7 @@ def _featurise_single_row(
     # Convert row to dicts in the shape each extractor expects
     txn_dict: dict[str, Any] = {
         "amount_usd": txn_row["amount_usd"],
+        "amount": txn_row.get("amount", txn_row["amount_usd"]),
         "is_international": txn_row["is_international"],
         "channel": txn_row["channel"],
         "payment_method": txn_row["payment_method"],
@@ -378,26 +382,22 @@ def _featurise_single_row(
         "credit_score": txn_row.get("user_credit_score"),
         "kyc_verified": txn_row["user_kyc_verified"],
     }
+    agg_feats = compute_all_aggregated_features(
+        user_history, merchant_history, txn_row["txn_timestamp"],
+        float(txn_row["amount_usd"]), static_merchant_avg=0.0,
+    )
     merchant_dict: dict[str, Any] = {
         "risk_level": txn_row["merchant_risk_level"],
-        "historical_fraud_rate": txn_row["merchant_historical_fraud_rate"],
+        "historical_fraud_rate": agg_feats["merchant_fraud_rate_7d"],
         "is_high_risk_category": txn_row["merchant_is_high_risk_category"],
         "is_online_only": txn_row["merchant_is_online_only"],
-        "avg_transaction_amount": txn_row["merchant_avg_transaction_amount"],
+        "avg_transaction_amount": agg_feats["merchant_avg_amount_7d"],
     }
 
     # 1. Raw features (no historical lookback)
     raw_feats = extract_raw_features(txn_dict, user_dict, merchant_dict)
 
     # 2. Aggregated rolling features (strictly historical)
-    agg_feats = compute_all_aggregated_features(
-        user_history=user_history,
-        merchant_history=merchant_history,
-        current_ts=txn_row["txn_timestamp"],
-        current_amount_usd=float(txn_row["amount_usd"]),
-        static_merchant_avg=float(txn_row.get("merchant_avg_transaction_amount", 0.0)),
-    )
-
     return {**raw_feats, **agg_feats}
 
 
@@ -451,9 +451,9 @@ class FeaturePipeline:
                        Must be >= 7 (longest rolling window in aggregation).
     """
 
-    def __init__(self, lookback_days: int = 7) -> None:
-        if lookback_days < 7:
-            raise ValueError("lookback_days must be >= 7 to cover the 7-day rolling window.")
+    def __init__(self, lookback_days: int = 30) -> None:
+        if lookback_days < 30:
+            raise ValueError("lookback_days must be >= 30 to cover the longest rolling window.")
         self.lookback_days = lookback_days
         logger.info("FeaturePipeline initialised (lookback_days=%d).", lookback_days)
 
@@ -461,214 +461,36 @@ class FeaturePipeline:
     # Training mode
     # ------------------------------------------------------------------
 
-    def build_training_dataset(
-        self,
-        since: datetime | None = None,
-        until: datetime | None = None,
-    ) -> tuple[pd.DataFrame, pd.Series]:
-        """
-        Build the full feature matrix for model training.
-
-        For each labelled transaction (fraud_label is not NULL), computes
-        features using ONLY prior transactions (strict leakage prevention).
-
-        The function processes transactions in chronological order so that
-        each transaction's rolling window correctly excludes future rows.
-
-        Args:
-            since: Only include transactions on or after this datetime (UTC).
-            until: Only include transactions before this datetime (UTC).
-
-        Returns:
-            Tuple of:
-                X — pd.DataFrame shape (n_samples, len(FEATURE_COLUMNS))
-                y — pd.Series[int] shape (n_samples,), fraud_label values
-
-        Note:
-            This method loads ALL relevant historical data into memory in one
-            query, then computes rolling windows with in-memory pandas operations.
-            For datasets > 200K rows, consider chunked processing.
-        """
-        logger.info("Building training dataset (since=%s, until=%s) …", since, until)
-
+    def build_training_dataset(self, since=None, until=None):
+        # Keep unlabelled transactions as behavioural context. Only targets are filtered.
+        history_start = since - timedelta(days=self.lookback_days) if since else None
         with sync_db_context() as db:
-            # Load all labelled completed transactions
-            all_txns = _load_full_transaction_table(db, since=since, labelled_only=True)
-
-        if all_txns.empty:
-            logger.warning("No labelled transactions found. Returning empty dataset.")
+            df = _load_full_transaction_table(db, since=history_start, labelled_only=False)
+        if df.empty:
             return pd.DataFrame(columns=FEATURE_COLUMNS), pd.Series([], dtype=int)
-
-        if until:
-            all_txns = all_txns[all_txns["txn_timestamp"] < pd.Timestamp(until, tz="UTC")]
-
-        logger.info("Featurising %d labelled transactions (vectorised) …", len(all_txns))
-
-        # Sort chronologically globally
-        df = all_txns.sort_values("txn_timestamp").reset_index(drop=True)
-
-        # ── Vectorized rolling helper ─────────────────────────────────────
-        # Iterate explicitly over groups (pandas groupby.apply strips key col).
-        # With 1,000 unique users and 100 merchants this is very fast.
-
-        def _rolling_for_group(
-            src: pd.DataFrame,
-            group_col: str,
-            val_col: str,
-            windows: dict[str, str],   # feat_name -> window_string
-            extra_cols: list[str] | None = None,
-        ) -> pd.DataFrame:
-            """
-            For each group in `src[group_col]`, sort by txn_timestamp,
-            then compute time-based rolling windows with shift(1) so the
-            current row is never included in its own window.
-            Returns a DataFrame with group_col, txn_timestamp, and all
-            window feature columns.
-            """
-            pieces: list[pd.DataFrame] = []
-            extra_cols = extra_cols or []
-            for gid, grp in src.groupby(group_col, sort=False):
-                g = grp.sort_values("txn_timestamp").copy()
-                g = g.set_index("txn_timestamp")
-                amt = g[val_col].shift(1)
-                for feat_name, win in windows.items():
-                    if "count" in feat_name:
-                        g[feat_name] = amt.rolling(win, min_periods=0).count().fillna(0)
-                    elif "avg" in feat_name or "mean" in feat_name:
-                        g[feat_name] = amt.rolling(win, min_periods=1).mean().fillna(0)
-                    elif "std" in feat_name:
-                        g[feat_name] = amt.rolling(win, min_periods=2).std(ddof=1).fillna(0)
-                    elif "max" in feat_name:
-                        g[feat_name] = amt.rolling(win, min_periods=1).max().fillna(0)
-                    elif "sum" in feat_name or "total" in feat_name:
-                        g[feat_name] = amt.rolling(win, min_periods=0).sum().fillna(0)
-                for ec in extra_cols:
-                    if ec in grp.columns:
-                        g[ec] = grp.set_index("txn_timestamp")[ec]
-                g[group_col] = gid
-                pieces.append(g.reset_index())  # txn_timestamp back to column
-            return pd.concat(pieces, ignore_index=True) if pieces else pd.DataFrame()
-
-        # ── USER ROLLING ──────────────────────────────────────────────────
-        udf = df[["user_id", "txn_timestamp", "amount_usd"]].copy()
-        udf_rolled = _rolling_for_group(udf, "user_id", "amount_usd", {
-            "user_txn_count_1h":    "3600s",
-            "user_txn_count_24h":   "86400s",
-            "user_txn_count_7d":    "604800s",
-            "user_avg_amount_7d":   "604800s",
-            "user_std_amount_7d":   "604800s",
-            "user_max_amount_7d":   "604800s",
-            "user_total_amount_24h":"86400s",
-        })
-
-        udf_rolled["user_velocity_ratio_1h_24h"] = (
-            udf_rolled["user_txn_count_1h"] / udf_rolled["user_txn_count_24h"].clip(lower=1)
-        )
-        udf_rolled["amount_vs_user_avg_ratio"] = (
-            udf_rolled["amount_usd"] / udf_rolled["user_avg_amount_7d"].replace(0, np.nan)
-        ).fillna(1.0)
-
-        udf_rolled = udf_rolled.sort_values(["user_id", "txn_timestamp"])
-        udf_rolled["_prev_ts"] = udf_rolled.groupby("user_id")["txn_timestamp"].shift(1)
-        udf_rolled["time_since_last_txn_minutes"] = (
-            (udf_rolled["txn_timestamp"] - udf_rolled["_prev_ts"]).dt.total_seconds() / 60.0
-        ).clip(upper=43_200.0).fillna(43_200.0)
-
-        user_feat_cols = [
-            "user_txn_count_1h", "user_txn_count_24h", "user_txn_count_7d",
-            "user_avg_amount_7d", "user_std_amount_7d", "user_max_amount_7d",
-            "user_total_amount_24h", "user_velocity_ratio_1h_24h",
-            "amount_vs_user_avg_ratio", "time_since_last_txn_minutes",
-        ]
-        df = df.reset_index(drop=True)
-        user_feats_aligned = df[["user_id", "txn_timestamp"]].merge(
-            udf_rolled[["user_id", "txn_timestamp"] + user_feat_cols],
-            on=["user_id", "txn_timestamp"], how="left",
-        )[user_feat_cols]
-        df = pd.concat([df, user_feats_aligned.reset_index(drop=True)], axis=1)
-
-        # ── MERCHANT ROLLING ──────────────────────────────────────────────
-        mdf = df[["merchant_id", "txn_timestamp", "amount_usd", "fraud_label"]].copy()
-        # For merchant fraud rate we need a special handler (extra col)
-        pieces_m: list[pd.DataFrame] = []
-        for mid, grp in mdf.groupby("merchant_id", sort=False):
-            g = grp.sort_values("txn_timestamp").copy().set_index("txn_timestamp")
-            amt  = g["amount_usd"].shift(1)
-            flab = g["fraud_label"].shift(1)
-            g["merchant_txn_count_7d"]  = amt.rolling("604800s", min_periods=0).count().fillna(0)
-            g["merchant_avg_amount_7d"] = amt.rolling("604800s", min_periods=1).mean().fillna(0)
-            g["merchant_fraud_rate_7d"] = flab.rolling("604800s", min_periods=1).mean().fillna(0)
-            g["merchant_id"] = mid
-            pieces_m.append(g.reset_index())
-        mdf_rolled = pd.concat(pieces_m, ignore_index=True) if pieces_m else pd.DataFrame()
-
-        merchant_feat_cols = ["merchant_txn_count_7d", "merchant_avg_amount_7d", "merchant_fraud_rate_7d"]
-        merchant_feats_aligned = df[["merchant_id", "txn_timestamp"]].merge(
-            mdf_rolled[["merchant_id", "txn_timestamp"] + merchant_feat_cols],
-            on=["merchant_id", "txn_timestamp"], how="left",
-        )[merchant_feat_cols]
-        df = pd.concat([df, merchant_feats_aligned.reset_index(drop=True)], axis=1)
-
-        df["amount_vs_merchant_avg_ratio"] = (
-            df["amount_usd"] / df["merchant_avg_amount_7d"].replace(0, np.nan)
-        ).fillna(1.0)
-
-        # ── RAW FEATURES (static per-row, fast) ───────────────────────────
-        from src.features.feature_extraction import extract_raw_features
-
-        raw_rows: list[dict[str, Any]] = []
+        df = df.sort_values("txn_timestamp", kind="stable").reset_index(drop=True)
+        cutoff = pd.Timestamp(until) if until else pd.Timestamp.now(tz="UTC")
+        cutoff = cutoff.tz_localize("UTC") if cutoff.tzinfo is None else cutoff.tz_convert("UTC")
+        df = df[df.txn_timestamp < cutoff].copy()
+        users = {k: g for k, g in df.groupby("user_id", sort=False)}
+        merchants = {k: g for k, g in df.groupby("merchant_id", sort=False)}
+        def window(group, ts):
+            stamps = pd.DatetimeIndex(group.txn_timestamp)
+            start = stamps.searchsorted(ts - timedelta(days=self.lookback_days), side="left")
+            end = stamps.searchsorted(ts, side="left")
+            return group.iloc[start:end]
+        features, labels = [], []
         for _, row in df.iterrows():
-            raw_rows.append(extract_raw_features(
-                txn={
-                    "amount_usd":       float(row["amount_usd"]),
-                    "is_international": bool(row["is_international"]),
-                    "channel":          str(row["channel"]),
-                    "payment_method":   str(row["payment_method"]),
-                    "txn_timestamp":    row["txn_timestamp"],
-                },
-                user={
-                    "account_age_days": row["user_account_age_days"],
-                    "risk_tier":        str(row["user_risk_tier"]),
-                    "credit_score":     row.get("user_credit_score"),
-                    "kyc_verified":     bool(row["user_kyc_verified"]),
-                },
-                merchant={
-                    "risk_level":             str(row["merchant_risk_level"]),
-                    "historical_fraud_rate":  float(row["merchant_historical_fraud_rate"]),
-                    "is_high_risk_category":  bool(row["merchant_is_high_risk_category"]),
-                    "is_online_only":         bool(row["merchant_is_online_only"]),
-                    "avg_transaction_amount": float(row["merchant_avg_transaction_amount"]),
-                },
-            ))
-
-        raw_df = pd.DataFrame(raw_rows, index=df.index)
-        agg_cols_present = [c for c in AGGREGATED_FEATURE_NAMES if c in df.columns]
-        X = pd.concat([raw_df, df[agg_cols_present]], axis=1)
-
-        # Drop any rows where fraud_label is still NaN after the labelled_only filter
-        valid_mask = df["fraud_label"].notna()
-        X = X.loc[valid_mask].reset_index(drop=True)
-        y = pd.Series(
-            df.loc[valid_mask, "fraud_label"].astype(int).values,
-            dtype=int, name=TARGET_COLUMN,
-        )
-
-
-        X = _apply_final_imputation(X)
-        X = _enforce_column_order(X)
-
-        fraud_pct = y.mean() * 100
-        logger.info(
-            "Training dataset ready: %d samples, %d features, %.2f%% fraud.",
-            len(X), len(FEATURE_COLUMNS), fraud_pct,
-        )
-        return X, y
-
-    # ------------------------------------------------------------------
-    # Inference mode — single transaction
-    # ------------------------------------------------------------------
-
-
+            if pd.isna(row.fraud_label) or (since and row.txn_timestamp < pd.Timestamp(since)):
+                continue
+            labelled_at = row.get("labelled_at")
+            if pd.isna(labelled_at) or pd.Timestamp(labelled_at) >= cutoff:
+                continue
+            features.append(_featurise_single_row(row, window(users[row.user_id], row.txn_timestamp),
+                                                   window(merchants[row.merchant_id], row.txn_timestamp)))
+            labels.append(int(row.fraud_label))
+        X = _enforce_column_order(_apply_final_imputation(pd.DataFrame(features)))
+        return X, pd.Series(labels, dtype=int, name=TARGET_COLUMN)
 
     def transform_single(
         self,
@@ -801,6 +623,7 @@ class FeaturePipeline:
         # Build a unified row dict to match the shape _featurise_single_row expects
         row_dict: dict[str, Any] = {
             "amount_usd": txn.get("amount_usd", 0.0),
+            "amount": txn.get("amount", txn.get("amount_usd", 0.0)),
             "is_international": txn.get("is_international", False),
             "channel": txn.get("channel", "web"),
             "payment_method": txn.get("payment_method", "credit_card"),

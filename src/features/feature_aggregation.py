@@ -54,6 +54,9 @@ AGGREGATED_FEATURE_NAMES: list[str] = [
     "merchant_txn_count_7d",
     "merchant_fraud_rate_7d",       # Fraction of labelled-fraud txns in 7d window
     "merchant_avg_amount_7d",
+    "user_avg_amount_30d",
+    "user_txn_count_30d",
+    "amount_vs_user_avg_30d",
 ]
 
 #: Time window durations used throughout this module.
@@ -225,7 +228,10 @@ def compute_merchant_rolling_features(
     )
 
     # Fraud rate within 7d window (only from labelled rows to avoid NULL bias)
-    labelled_7d = w7d[w7d["fraud_label"].notna()] if not w7d.empty else pd.DataFrame()
+    labelled_7d = pd.DataFrame()
+    if not w7d.empty and "labelled_at" in w7d.columns:
+        available = pd.to_datetime(w7d["labelled_at"], utc=True, errors="coerce")
+        labelled_7d = w7d[w7d["fraud_label"].notna() & (available < current_ts)]
     if not labelled_7d.empty:
         fraud_rate_7d = float(labelled_7d["fraud_label"].mean())
     else:
@@ -317,6 +323,9 @@ def compute_all_aggregated_features(
     Returns:
         Flat dict containing all keys from AGGREGATED_FEATURE_NAMES.
     """
+    if current_ts.tzinfo is None:
+        current_ts = current_ts.replace(tzinfo=timezone.utc)
+
     user_feats = compute_user_rolling_features(
         user_history, current_ts, current_amount_usd
     )
@@ -324,5 +333,9 @@ def compute_all_aggregated_features(
         merchant_history, current_ts, current_amount_usd, static_merchant_avg
     )
     behavioral_feats = compute_behavioral_features(user_history, current_ts)
+    w30 = _filter_window(user_history, current_ts, timedelta(days=30))
+    avg30 = _safe_mean(w30["amount_usd"]) if not w30.empty else 0.0
+    behavioral_feats.update(user_avg_amount_30d=round(avg30, 4), user_txn_count_30d=len(w30),
+                            amount_vs_user_avg_30d=round(current_amount_usd / avg30, 6) if avg30 else 1.0)
 
     return {**user_feats, **merchant_feats, **behavioral_feats}

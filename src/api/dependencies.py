@@ -64,7 +64,8 @@ def get_model(request: Request) -> Any:
 
     Raises HTTP 503 if the model has not been loaded (startup failure).
     """
-    model = getattr(request.app.state, "model", None)
+    bundle = getattr(request.app.state, "model_bundle", None)
+    model = bundle.model if bundle else None
     if model is None:
         logger.error("Model is not loaded — app.state.model is None.")
         raise HTTPException(
@@ -80,7 +81,8 @@ def get_model_meta(request: Request) -> dict[str, Any]:
 
     Raises HTTP 503 if the metadata has not been loaded.
     """
-    meta = getattr(request.app.state, "model_meta", None)
+    bundle = getattr(request.app.state, "model_bundle", None)
+    meta = bundle.metadata if bundle else None
     if meta is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -91,12 +93,14 @@ def get_model_meta(request: Request) -> dict[str, Any]:
 
 def get_model_version(request: Request) -> str:
     """Return the currently loaded model version tag."""
-    return getattr(request.app.state, "model_version", "unknown")
+    bundle = getattr(request.app.state, "model_bundle", None)
+    return bundle.version if bundle else "unknown"
 
 
 def get_decision_threshold(request: Request) -> float:
     """Return the decision threshold for the currently loaded model."""
-    return getattr(request.app.state, "threshold", 0.50)
+    bundle = getattr(request.app.state, "model_bundle", None)
+    return bundle.threshold if bundle else 0.50
 
 
 # Annotated type aliases for route signatures

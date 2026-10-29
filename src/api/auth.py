@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import jwt
+import hashlib
+import hmac
 import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -20,13 +22,20 @@ settings = get_settings()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.api_prefix}/token")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+    encoded = plain_password.encode('utf-8')
+    return bool(encoded) and len(encoded) <= 72 and bcrypt.checkpw(encoded, hashed_password.encode('utf-8'))
 
 def get_password_hash(password: str) -> str:
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
 # Generate the hash once on startup for the configured admin user
-ADMIN_PASSWORD_HASH = get_password_hash(settings.admin_password)
+ADMIN_PASSWORD_HASH = get_password_hash(settings.admin_password.get_secret_value()) if settings.admin_password.get_secret_value() else None
+
+def signing_key():
+    # Password rotation invalidates previously issued admin tokens, including default-login tokens.
+    return hmac.new(settings.secret_key.get_secret_value().encode(),
+                    settings.admin_password.get_secret_value().encode(), hashlib.sha256).digest()
+
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
@@ -37,7 +46,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(
         to_encode,
-        settings.secret_key.get_secret_value(),
+        signing_key(),
         algorithm=settings.jwt_algorithm
     )
     return encoded_jwt
@@ -51,7 +60,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> str:
     try:
         payload = jwt.decode(
             token,
-            settings.secret_key.get_secret_value(),
+            signing_key(),
             algorithms=[settings.jwt_algorithm]
         )
         username: str = payload.get("sub")

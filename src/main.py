@@ -46,12 +46,16 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request, status, BackgroundTasks
 from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
+from sqlalchemy.exc import SQLAlchemyError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -91,55 +95,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("=" * 60)
 
     # Resolve model directory from settings or default
-    model_dir = Path(getattr(settings, "model_dir", "models"))
+    model_dir = settings.model_artifact_dir
     app.state.model_dir = model_dir
 
-    # ── Load production model ─────────────────────────────────────────────
-    app.state.model         = None
-    app.state.model_meta    = None
-    app.state.model_version = None
-    app.state.threshold     = 0.50
-
+    from src.services.model_state import load_bundle
+    app.state.model_bundle = None
+    app.state.last_retraining_attempt = None
     try:
-        from src.training.model_registry import ModelRegistry
-        from src.training.save_model import load_model_with_metadata
-
-        registry  = ModelRegistry(base_dir=model_dir)
-        prod_info = registry.get_latest_model()
-        version   = prod_info["version"]
-
-        logger.info("Loading production model: %s …", version)
-        model, meta = load_model_with_metadata(version=version, base_dir=model_dir)
-
-        # Store in app.state — accessible via request.app.state in all routes
-        app.state.model         = model
-        app.state.model_meta    = meta
-        app.state.model_version = version
-
-        # Use the optimised threshold if available, else fall back to default
-        app.state.threshold = (
-            meta.get("metrics", {}).get("threshold_used", 0.50)
-            or prod_info.get("metrics", {}).get("threshold_used", 0.50)
-            or 0.50
-        )
-
-        logger.info(
-            "Model loaded [OK] | version=%s | threshold=%.3f | features=%d",
-            version, app.state.threshold, len(meta.get("feature_columns", [])),
-        )
-
-    except RuntimeError as exc:
-        # No production model promoted yet — service starts in degraded mode
-        logger.warning(
-            "No production model found in registry: %s. "
-            "API will start in degraded mode — /predict will return HTTP 503 "
-            "until a model is trained and promoted.",
-            exc,
-        )
-    except FileNotFoundError as exc:
-        logger.error("Model artifact missing: %s", exc)
-    except Exception as exc:
-        logger.exception("Unexpected error loading model: %s", exc)
+        app.state.model_bundle = await asyncio.to_thread(load_bundle, model_dir)
+    except Exception:
+        logger.exception("Model load failed; readiness will fail")
 
     # ── Verify DB connectivity ────────────────────────────────────────────
     try:
@@ -155,11 +120,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from src.services.drift_service import check_drift_and_retrain
     
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(check_drift_and_retrain, "interval", minutes=5, id="drift_check")
-    scheduler.start()
-    app.state.scheduler = scheduler
-    logger.info("Started APScheduler for drift detection (interval=5m).")
+    if settings.monitoring_enabled:
+        scheduler = AsyncIOScheduler()
+        scheduler.add_job(check_drift_and_retrain, "interval", minutes=5, args=[app],
+                          id="drift_check", max_instances=1, coalesce=True)
+        scheduler.start()
+        app.state.scheduler = scheduler
 
     logger.info("API startup complete. Ready to serve requests.")
     logger.info("=" * 60)
@@ -167,10 +133,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     # ── Shutdown ─────────────────────────────────────────────────────────
-    logger.info("API shutting down …")
+    from src.database.session import async_engine, sync_engine
     if hasattr(app.state, "scheduler"):
-        app.state.scheduler.shutdown()
-        logger.info("APScheduler stopped.")
+        app.state.scheduler.shutdown(wait=False)
+    await async_engine.dispose()
+    sync_engine.dispose()
+    logger.info("API shut down.")
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +158,7 @@ def create_app() -> FastAPI:
             "Intelligent fraud detection API. Scores transactions in real-time "
             "using a versioned ML model with full prediction audit logging."
         ),
-        version="1.0.0",
+        version="1.1.0",
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
@@ -200,8 +168,8 @@ def create_app() -> FastAPI:
     # ── Middleware ────────────────────────────────────────────────────────
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins if hasattr(settings, "cors_origins") else ["*"],
-        allow_credentials=True,
+        allow_origins=settings.allowed_origins,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -215,10 +183,7 @@ def create_app() -> FastAPI:
         """Return a clean 422 with the error details."""
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            content={
-                "error": "validation_error",
-                "detail": exc.errors(),
-            },
+            content=jsonable_encoder({"error": "validation_error", "detail": exc.errors()}),
         )
 
     @app.exception_handler(Exception)
@@ -227,45 +192,47 @@ def create_app() -> FastAPI:
     ) -> JSONResponse:
         """Catch-all: log the exception and return a generic 500."""
         logger.exception("Unhandled exception on %s %s: %s", request.method, request.url, exc)
-        import traceback
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={
                 "error": "internal_server_error",
-                "detail": f"An unexpected error occurred. {repr(exc)} - {traceback.format_exc()}",
+                "detail": "An unexpected error occurred.",
+                "request_id": getattr(request.state, "request_id", None),
             },
         )
+
+    @app.exception_handler(SQLAlchemyError)
+    async def database_error(request, exc):
+        logger.error("Database operation failed", exc_info=exc)
+        return JSONResponse(status_code=503, content={"detail": "Database temporarily unavailable. Try again.", "request_id": getattr(request.state, "request_id", None)})
 
     # ── Request timing middleware ─────────────────────────────────────────
     @app.middleware("http")
     async def add_process_time_header(request: Request, call_next):
+        request.state.request_id = str(uuid.uuid4())
         t0 = time.perf_counter()
         response = await call_next(request)
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
         response.headers["X-Process-Time-Ms"] = str(elapsed_ms)
+        response.headers["X-App-Revision"] = settings.build_revision
+        response.headers["X-Request-ID"] = request.state.request_id
         return response
+
+    @app.get("/api/v1/live", tags=["Operations"])
+    async def live():
+        return {"status": "ok", "revision": settings.build_revision}
 
     # ── Root redirect ─────────────────────────────────────────────────────
     @app.get("/", include_in_schema=False)
     async def root():
         return {
             "service": "Risk Scoring Platform",
-            "version": "1.0.0",
+            "version": "1.1.0",
 
             "docs": "/docs",
-            "health": "/health",
+            "health": "/api/v1/health",
+            "revision": settings.build_revision,
         }
-
-    @app.get("/api/v1/seed")
-    def trigger_seed():
-        import traceback
-        try:
-            from src.data.synthetic_generator import seed_database, GeneratorConfig
-            cfg = GeneratorConfig(n_users=200, n_merchants=50, n_transactions=5000)
-            seed_database(cfg)
-            return {"status": "success", "message": "Database seeded successfully!"}
-        except Exception as e:
-            return {"status": "error", "message": str(e), "traceback": traceback.format_exc()}
 
     # ── Register routers ──────────────────────────────────────────────────
     API_PREFIX = "/api/v1"

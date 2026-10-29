@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     rootDir: .
-    buildCommand: pip install --upgrade pip && pip install -r requirements-run.txt
+    buildCommand: pip install -r requirements-run.txt && npm --prefix frontend ci && npm --prefix frontend run build
     startCommand: python -m uvicorn src.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/v1/health
     envVars:
@@ -23,4 +23,20 @@ services:
       - key: API_PORT
         value: 10000
       - key: ALLOWED_ORIGINS
-        value: '["*"]'
+        value: '[]'
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: NODE_VERSION
+        value: 22.14.0

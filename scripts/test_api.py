@@ -1,95 +1,55 @@
-"""
-scripts/test_api.py
---------------------
-Quick smoke-test for the FastAPI inference layer.
-Runs all key endpoints, prints results, and exits.
-
-Usage:
-    python scripts/test_api.py
-"""
+"""Authenticated end-to-end smoke check; never seeds or resets a database."""
+import argparse
+import os
 import sys
-import time
-import json
+from pathlib import Path
+import httpx
+from dotenv import load_dotenv
 
-sys.path.insert(0, ".")
-
-try:
-    import requests
-except ImportError:
-    print("[ERROR] 'requests' not installed. Run: pip install requests")
-    sys.exit(1)
-
-BASE = "http://localhost:8000/api/v1"
-TIMEOUT = 15  # seconds per request
-
-# A known fraud transaction ID seeded in the DB
-FRAUD_TXN_ID = "c1212b7d-809e-416a-9983-6001405ac382"
-
-PASS = "[PASS]"
-FAIL = "[FAIL]"
-
-def check(label, response):
-    ok = 200 <= response.status_code < 300
-    status = PASS if ok else FAIL
-    print(f"\n{status} {label}")
-    print(f"     HTTP {response.status_code}")
-    try:
-        body = response.json()
-        # Pretty print, truncate long fields
-        for k, v in body.items():
-            val = str(v)
-            print(f"     {k}: {val[:120]}")
-    except Exception:
-        print(f"     (non-JSON) {response.text[:200]}")
-    return ok
-
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 def main():
-    print("=" * 55)
-    print("  Risk Scoring Platform — API Smoke Test")
-    print("=" * 55)
-
-    results = []
-
-    # ── 1. Health ─────────────────────────────────────────
-    try:
-        r = requests.get(f"{BASE}/health", timeout=TIMEOUT)
-        results.append(check("GET /health", r))
-    except requests.exceptions.ConnectionError:
-        print(f"\n{FAIL} GET /health  ->  Connection refused (server not running?)")
-        results.append(False)
-    except requests.exceptions.Timeout:
-        print(f"\n{FAIL} GET /health  ->  Timed out after {TIMEOUT}s")
-        results.append(False)
-
-    # ── 2. Model info ──────────────────────────────────────
-    try:
-        r = requests.get(f"{BASE}/model-info", timeout=TIMEOUT)
-        results.append(check("GET /model-info", r))
-    except Exception as e:
-        print(f"\n{FAIL} GET /model-info  ->  {e}")
-        results.append(False)
-
-    # ── 3. Predict (known fraud transaction) ──────────────
-    try:
-        r = requests.post(
-            f"{BASE}/predict",
-            json={"transaction_id": FRAUD_TXN_ID},
-            timeout=TIMEOUT,
-        )
-        results.append(check("POST /predict", r))
-    except Exception as e:
-        print(f"\n{FAIL} POST /predict  ->  {e}")
-        results.append(False)
-
-    # ── Summary ────────────────────────────────────────────
-    print("\n" + "=" * 55)
-    passed = sum(results)
-    total  = len(results)
-    print(f"  Result: {passed}/{total} endpoints passed")
-    print("=" * 55)
-    sys.exit(0 if passed == total else 1)
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--base-url", default="http://127.0.0.1:8000")
+    args = parser.parse_args()
+    password = os.environ.get("ADMIN_PASSWORD")
+    if not password:
+        raise SystemExit("Set ADMIN_PASSWORD for the service under test; credentials are never printed.")
+    with httpx.Client(base_url=args.base_url, timeout=45) as client:
+        health = client.get("/api/v1/health")
+        assert health.status_code == 200 and health.json()["status"] == "ok", "Readiness failed"
+        assert client.get("/api/v1/seed").status_code == 404, "Reset route must be absent"
+        assert client.get("/api/v1/dashboard/stats").status_code == 401, "Dashboard must require authentication"
+        token = client.post("/api/v1/token", data={"username":os.environ.get("ADMIN_USERNAME","admin"),"password":password})
+        token.raise_for_status()
+        client.headers["Authorization"] = "Bearer " + token.json()["access_token"]
+        assert client.post("/api/v1/predict",json={"transaction_id":"bad"}).status_code == 422
+        assert client.post("/api/v1/predict",json={"transaction_id":"00000000-0000-4000-8000-000000000000"}).status_code == 404
+        choices = client.get("/api/v1/dashboard/transactions").json()
+        assert choices, "No stored transactions are available for scoring"
+        tid = choices[0]["id"]
+        predictions = []
+        counts = []
+        for _ in range(2):
+            result = client.post("/api/v1/predict",json={"transaction_id":tid,"include_features":True})
+            result.raise_for_status()
+            score = result.json()
+            assert 0 <= score["risk_score"] <= 100
+            assert abs(score["risk_score"] - score["fraud_probability"]*100) < .011
+            feed = client.get("/api/v1/dashboard/recent-transactions").json()
+            entry = next(row for row in feed if row["log_id"] == score["log_id"])
+            assert abs(entry["score"] - score["risk_score"]) < .011
+            assert abs(entry["amount_usd"] - score["feature_snapshot"]["amount_usd"]) < .0001
+            counts.append(client.get("/api/v1/dashboard/stats").json()["total_transactions"])
+            predictions.append({"score":score["risk_score"],"latency_ms":score["latency_ms"],"server_ms":result.headers.get("x-process-time-ms")})
+        assert counts[0] == counts[1], "Repeated scoring inflated unique transaction KPI"
+        batch = client.post("/api/v1/predict/batch",json={"transaction_ids":[tid,"00000000-0000-4000-8000-000000000000"]})
+        batch.raise_for_status()
+        assert batch.json()["total_scored"] == 1 and batch.json()["errors"][0]["status"] == 404
+        assert client.get("/api/v1/models").status_code == 200
+        assert client.get("/api/v1/dashboard/review-queue").status_code == 200
+        print("PASS: readiness, reset removal, authentication, validation, scoring, durable feed, currency, unique KPIs, mixed batch, models, review queue")
+        print("Prediction samples:", predictions)
 
 if __name__ == "__main__":
     main()

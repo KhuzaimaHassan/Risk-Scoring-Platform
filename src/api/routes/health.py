@@ -15,7 +15,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Request, Response, status
 
 from src.api.dependencies import AsyncDBSession, check_db_connection
 from src.api.schemas import (
@@ -45,13 +45,14 @@ router = APIRouter(tags=["Operations"])
         "database connectivity, and service uptime."
     ),
 )
-async def health_check(request: Request, db: AsyncDBSession) -> HealthResponse:
+async def health_check(request: Request, response: Response, db: AsyncDBSession) -> HealthResponse:
     """
     Liveness + readiness probe combined.
     Used by Docker health checks and Kubernetes liveness/readiness probes.
     """
-    model_loaded  = getattr(request.app.state, "model", None) is not None
-    model_version = getattr(request.app.state, "model_version", None)
+    bundle = getattr(request.app.state, "model_bundle", None)
+    model_loaded = bundle is not None
+    model_version = bundle.version if bundle else None
     start_time    = getattr(request.app.state, "start_time", time.time())
     uptime        = time.time() - start_time
 
@@ -59,6 +60,7 @@ async def health_check(request: Request, db: AsyncDBSession) -> HealthResponse:
 
     overall_status = "ok" if (model_loaded and db_ok) else "degraded"
 
+    response.status_code = 200 if overall_status == "ok" else 503
     return HealthResponse(
         status=overall_status,
         model_loaded=model_loaded,
@@ -88,7 +90,8 @@ async def model_info(request: Request) -> ModelInfoResponse:
     Return metadata for the currently loaded model.
     No DB I/O — reads from app.state which is populated at startup.
     """
-    meta = getattr(request.app.state, "model_meta", None)
+    bundle = getattr(request.app.state, "model_bundle", None)
+    meta = bundle.metadata if bundle else None
     if meta is None:
         from fastapi import HTTPException
         raise HTTPException(
@@ -117,7 +120,7 @@ async def model_info(request: Request) -> ModelInfoResponse:
             threshold_used=raw_metrics.get("threshold_used"),
             training_rows=meta.get("training_rows"),
         ),
-        artifact_path=meta.get("artifact_path", ""),
+        artifact_path="",
     )
 
 

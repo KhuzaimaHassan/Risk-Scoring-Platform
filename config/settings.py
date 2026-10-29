@@ -16,6 +16,7 @@ Naming convention:
 import sys
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -188,6 +189,11 @@ class Settings(BaseSettings):
         default=False,
         description="Auto-promote retrained model to production if metrics improve",
     )
+    monitoring_enabled: bool = True
+    retraining_cooldown_hours: int = Field(default=24, ge=1)
+    model_min_recall: float = Field(default=0.5, ge=0, le=1)
+    model_min_f1: float = Field(default=0.2, ge=0, le=1)
+    build_revision: str = Field(default="local", validation_alias="RENDER_GIT_COMMIT")
 
     # -----------------------------------------------------------------------
     # Security
@@ -208,9 +214,9 @@ class Settings(BaseSettings):
         default="admin",
         description="Hardcoded admin username for the dashboard",
     )
-    admin_password: str = Field(
-        default="admin123",
-        description="Hardcoded admin password for the dashboard",
+    admin_password: SecretStr = Field(
+        default=SecretStr(""),
+        description="Explicit admin password; no default credentials",
     )
     allowed_origins: list[str] = Field(
         default=["http://localhost:3000"],
@@ -224,12 +230,12 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         """Synchronous DSN for Alembic and scripts."""
-        return f"postgresql://{self.db_user}:{self.db_password.get_secret_value()}@{self.db_host}:{self.db_port}/{self.db_name}"
+        return f"postgresql://{quote_plus(self.db_user)}:{quote_plus(self.db_password.get_secret_value())}@{self.db_host}:{self.db_port}/{self.db_name}"
 
     @property
     def async_database_url(self) -> str:
         """Async DSN for FastAPI runtime."""
-        return f"postgresql+asyncpg://{self.db_user}:{self.db_password.get_secret_value()}@{self.db_host}:{self.db_port}/{self.db_name}"
+        return self.database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
     # -----------------------------------------------------------------------
     # Validators
@@ -254,7 +260,12 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def enforce_prod_safety(self) -> "Settings":
         """Prevent known-insecure defaults from reaching production."""
+        password = self.admin_password.get_secret_value()
+        if password and (len(password) < 12 or len(password.encode("utf-8")) > 72 or password.lower() in {"admin123", "password1234"}):
+            raise ValueError("ADMIN_PASSWORD must contain 12–72 UTF-8 bytes and must not be a default password")
         if self.environment == "production":
+            if not password:
+                raise ValueError("ADMIN_PASSWORD must be explicitly configured in production")
             if self.debug:
                 raise ValueError("debug=True is not allowed in production")
             if self.db_echo:

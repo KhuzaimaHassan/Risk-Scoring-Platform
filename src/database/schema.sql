@@ -31,53 +31,53 @@ CREATE EXTENSION IF NOT EXISTS "pg_trgm";     -- trigram indexes for name search
 -- ---------------------------------------------------------------------------
 
 DO $$ BEGIN
-    CREATE TYPE risk_tier_enum AS ENUM ('low', 'medium', 'high', 'blocked');
+    CREATE TYPE risk_tier_enum AS ENUM ('LOW', 'MEDIUM', 'HIGH', 'BLOCKED');
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 DO $$ BEGIN
     CREATE TYPE merchant_category_enum AS ENUM (
-        'retail', 'food_beverage', 'travel', 'electronics',
-        'gambling', 'crypto', 'healthcare', 'utilities', 'other'
+        'RETAIL', 'FOOD_BEVERAGE', 'TRAVEL', 'ELECTRONICS',
+        'GAMBLING', 'CRYPTO', 'HEALTHCARE', 'UTILITIES', 'OTHER'
     );
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 DO $$ BEGIN
-    CREATE TYPE merchant_risk_level_enum AS ENUM ('low', 'medium', 'high');
+    CREATE TYPE merchant_risk_level_enum AS ENUM ('LOW', 'MEDIUM', 'HIGH');
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 DO $$ BEGIN
     CREATE TYPE txn_status_enum AS ENUM (
-        'pending', 'completed', 'declined', 'reversed', 'flagged'
+        'PENDING', 'COMPLETED', 'DECLINED', 'REVERSED', 'FLAGGED'
     );
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 DO $$ BEGIN
-    CREATE TYPE txn_channel_enum AS ENUM ('web', 'mobile', 'pos', 'atm', 'api');
+    CREATE TYPE txn_channel_enum AS ENUM ('WEB', 'MOBILE', 'POS', 'ATM', 'API');
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 DO $$ BEGIN
     CREATE TYPE payment_method_enum AS ENUM (
-        'credit_card', 'debit_card', 'bank_transfer', 'crypto', 'wallet', 'bnpl'
+        'CREDIT_CARD', 'DEBIT_CARD', 'BANK_TRANSFER', 'CRYPTO', 'WALLET', 'BUY_NOW_PAY_LATER'
     );
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 DO $$ BEGIN
     CREATE TYPE prediction_outcome_enum AS ENUM (
-        'true_positive', 'true_negative',
-        'false_positive', 'false_negative', 'unknown'
+        'TRUE_POSITIVE', 'TRUE_NEGATIVE',
+        'FALSE_POSITIVE', 'FALSE_NEGATIVE', 'UNKNOWN'
     );
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 DO $$ BEGIN
     CREATE TYPE model_stage_enum AS ENUM (
-        'candidate', 'staging', 'production', 'archived', 'failed'
+        'CANDIDATE', 'STAGING', 'PRODUCTION', 'ARCHIVED', 'FAILED'
     );
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS dim_user (
     kyc_verified        BOOLEAN         NOT NULL DEFAULT FALSE,
 
     -- Risk profile
-    risk_tier           risk_tier_enum  NOT NULL DEFAULT 'medium',
+    risk_tier           risk_tier_enum  NOT NULL DEFAULT 'MEDIUM',
     credit_score        NUMERIC(5,2),               -- Nullable; 300.00 – 850.00
 
     -- Denormalised aggregates (updated by ETL/trigger)
@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS dim_merchant (
 
     -- Identity
     merchant_name           VARCHAR(255)                NOT NULL,
-    category                merchant_category_enum      NOT NULL DEFAULT 'other',
+    category                merchant_category_enum      NOT NULL DEFAULT 'OTHER',
     country_code            CHAR(2)                     NOT NULL,
     city                    VARCHAR(100),
 
@@ -152,7 +152,7 @@ CREATE TABLE IF NOT EXISTS dim_merchant (
     is_active               BOOLEAN                     NOT NULL DEFAULT TRUE,
 
     -- Risk profile
-    risk_level              merchant_risk_level_enum    NOT NULL DEFAULT 'medium',
+    risk_level              merchant_risk_level_enum    NOT NULL DEFAULT 'MEDIUM',
     is_high_risk_category   BOOLEAN                     NOT NULL DEFAULT FALSE,
 
     -- Denormalised statistics (updated by ETL)
@@ -203,7 +203,7 @@ CREATE TABLE IF NOT EXISTS fact_transaction (
     amount_usd              NUMERIC(18,4)           NOT NULL,
 
     -- Classification
-    status                  txn_status_enum         NOT NULL DEFAULT 'pending',
+    status                  txn_status_enum         NOT NULL DEFAULT 'PENDING',
     channel                 txn_channel_enum        NOT NULL,
     payment_method          payment_method_enum     NOT NULL,
 
@@ -267,7 +267,7 @@ CREATE TABLE IF NOT EXISTS prediction_log (
     latency_ms              INTEGER                     NOT NULL DEFAULT 0,
 
     -- Ground truth resolution
-    outcome                 prediction_outcome_enum     NOT NULL DEFAULT 'unknown',
+    outcome                 prediction_outcome_enum     NOT NULL DEFAULT 'UNKNOWN',
     outcome_resolved_at     TIMESTAMPTZ,
 
     -- Human review
@@ -300,7 +300,7 @@ CREATE TABLE IF NOT EXISTS model_registry (
     -- Identity
     model_name              VARCHAR(128)        NOT NULL,
     model_version           VARCHAR(64)         NOT NULL,
-    stage                   model_stage_enum    NOT NULL DEFAULT 'candidate',
+    stage                   model_stage_enum    NOT NULL DEFAULT 'CANDIDATE',
 
     -- Artifact location
     artifact_path           VARCHAR(512)        NOT NULL,

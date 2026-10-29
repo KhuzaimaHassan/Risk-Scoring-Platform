@@ -69,7 +69,6 @@ async def log_prediction(
     )
     db.add(log)
     await db.flush()
-    await db.refresh(log)
     return log
 
 

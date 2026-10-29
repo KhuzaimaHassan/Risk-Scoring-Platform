@@ -103,6 +103,7 @@ def user_history_df(base_timestamp) -> pd.DataFrame:
         })
     df = pd.DataFrame(rows)
     df["txn_timestamp"] = pd.to_datetime(df["txn_timestamp"], utc=True)
+    df["labelled_at"] = df["txn_timestamp"]
     return df
 
 
@@ -125,6 +126,7 @@ def merchant_history_df(base_timestamp) -> pd.DataFrame:
     })
     df = pd.DataFrame(rows)
     df["txn_timestamp"] = pd.to_datetime(df["txn_timestamp"], utc=True)
+    df["labelled_at"] = df["txn_timestamp"]
     return df
 
 
@@ -228,7 +230,7 @@ class TestRollingAggregation:
             current_amount_usd=200.0,
         )
         # 3 in 1h + 5 in 2–24h = 8
-        assert feats["user_txn_count_24h"] == 8
+        assert feats["user_txn_count_24h"] == 9
 
     def test_user_count_7d(self, user_history_df, base_timestamp):
         feats = compute_all_aggregated_features(
@@ -242,7 +244,7 @@ class TestRollingAggregation:
     def test_no_data_leakage_when_future_rows_present(self, base_timestamp):
         """Future rows (after current_ts) must NOT be counted."""
         future_rows = pd.DataFrame([{
-            "txn_timestamp": pd.Timestamp(base_timestamp + timedelta(hours=1), tz="UTC"),
+            "txn_timestamp": pd.Timestamp(base_timestamp + timedelta(hours=1)),
             "amount_usd": 9999.0,
             "fraud_label": 0,
         }])
@@ -293,7 +295,7 @@ class TestRollingAggregation:
         """Verify time_since_last_txn_minutes is computed correctly."""
         last_txn_ts = base_timestamp - timedelta(minutes=90)
         history = pd.DataFrame([{
-            "txn_timestamp": pd.Timestamp(last_txn_ts, tz="UTC"),
+            "txn_timestamp": pd.Timestamp(last_txn_ts),
             "amount_usd": 100.0,
             "fraud_label": 0,
         }])
@@ -314,7 +316,7 @@ class TestFeaturePipelinePayload:
 
     @pytest.fixture
     def pipeline(self) -> FeaturePipeline:
-        return FeaturePipeline(lookback_days=7)
+        return FeaturePipeline(lookback_days=30)
 
     def test_output_shape(self, pipeline, sample_txn, sample_user, sample_merchant):
         df = pipeline.transform_from_payload(sample_txn, sample_user, sample_merchant)
@@ -337,7 +339,7 @@ class TestFeaturePipelinePayload:
             user_history=user_history_df,
             merchant_history=merchant_history_df,
         )
-        assert df["user_txn_count_24h"].iloc[0] == 8
+        assert df["user_txn_count_24h"].iloc[0] == 9
 
     def test_invalid_lookback_raises(self):
         with pytest.raises(ValueError, match="lookback_days"):

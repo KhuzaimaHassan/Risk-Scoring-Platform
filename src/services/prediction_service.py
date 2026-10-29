@@ -33,6 +33,7 @@ from typing import Any
 
 import pandas as pd
 from sqlalchemy import text
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.schemas import (
@@ -156,7 +157,7 @@ async def _fetch_merchant_history(
 # Risk context helpers
 # ---------------------------------------------------------------------------
 
-def _build_risk_context(probability: float, is_fraud: bool) -> ConfusionContext:
+def _build_risk_context(probability: float, is_fraud: bool, threshold: float = 0.5) -> ConfusionContext:
     """
     Map raw fraud probability to a human-readable risk band and action.
 
@@ -171,22 +172,10 @@ def _build_risk_context(probability: float, is_fraud: bool) -> ConfusionContext:
         |P - 0.50| < 0.25 → moderate
         else               → high
     """
-    if probability < 0.25:
-        band, action = "low", "allow"
-    elif probability < 0.50:
-        band, action = "medium", "allow"
-    elif probability < 0.75:
-        band, action = "high", "review"
-    else:
-        band, action = "critical", "block"
-
-    dist = abs(probability - 0.50)
-    if dist < 0.10:
-        confidence = "low"
-    elif dist < 0.25:
-        confidence = "moderate"
-    else:
-        confidence = "high"
+    band = "critical" if is_fraud and probability >= max(threshold, 0.75) else "high" if is_fraud else "medium" if probability >= threshold / 2 else "low"
+    action = "block" if band == "critical" else "review" if is_fraud else "allow"
+    dist = abs(probability - threshold)
+    confidence = "low" if dist < .1 else "moderate" if dist < .25 else "high"
 
     return ConfusionContext(
         risk_band=band,
@@ -240,11 +229,12 @@ class PredictionService:
         model_version: str,
         threshold: float,
     ) -> None:
+        self.batch_errors = []
         self.model         = model
         self.model_meta    = model_meta
         self.model_version = model_version
         self.threshold     = threshold
-        self._pipeline     = FeaturePipeline(lookback_days=7)
+        self._pipeline     = FeaturePipeline(lookback_days=30)
 
     async def predict(
         self,
@@ -302,6 +292,7 @@ class PredictionService:
         # ── Step 3: Build feature vector ──────────────────────────────────
         txn_dict = {
             "amount_usd":       float(row["amount_usd"]),
+            "amount": float(row["amount"]),
             "is_international": bool(row["is_international"]),
             "channel":          str(row["channel"]),
             "payment_method":   str(row["payment_method"]),
@@ -322,7 +313,7 @@ class PredictionService:
         }
 
         try:
-            feature_df = self._pipeline.transform_from_payload(
+            feature_df = await run_in_threadpool(self._pipeline.transform_from_payload,
                 txn=txn_dict,
                 user=user_dict,
                 merchant=merchant_dict,
@@ -335,14 +326,15 @@ class PredictionService:
 
         # ── Step 4: Model inference ───────────────────────────────────────
         try:
-            fraud_prob = float(self.model.predict_proba(feature_df)[0, 1])
+            probs = await run_in_threadpool(self.model.predict_proba, feature_df)
+            fraud_prob = float(probs[0, 1])
         except Exception as exc:
             logger.error("Model inference failed for txn %s: %s", transaction_id, exc)
             raise RuntimeError(f"Model inference failed: {exc}") from exc
 
         # ── Step 5: Apply threshold ───────────────────────────────────────
         is_fraud = fraud_prob >= self.threshold
-        risk_context = _build_risk_context(fraud_prob, is_fraud)
+        risk_context = _build_risk_context(fraud_prob, is_fraud, self.threshold)
 
         # ── Step 6: Compute latency ───────────────────────────────────────
         latency_ms = int((time.perf_counter() - t_start) * 1000)
@@ -361,6 +353,7 @@ class PredictionService:
             feature_snapshot=feature_dict,  # Always log features
         )
 
+        latency_ms = int((time.perf_counter() - t_start) * 1000)
         logger.info(
             "SCORED txn=%s | prob=%.4f | label=%s | threshold=%.2f | "
             "model=%s | latency=%dms",
@@ -392,14 +385,16 @@ class PredictionService:
         Skips transactions not found in the database (logs a warning per skip).
         """
         results = []
+        self.batch_errors = []
         for txn_id in transaction_ids:
             try:
-                result = await self.predict(db, txn_id, include_features)
-                results.append(result)
-            except ValueError as exc:
-                logger.warning("Skipping txn %s in batch: %s", txn_id, exc)
+                results.append(await self.predict(db, txn_id, include_features))
             except Exception as exc:
-                logger.error("Batch item failed for txn %s: %s", txn_id, exc)
+                await db.rollback()
+                missing = isinstance(exc, ValueError)
+                self.batch_errors.append({"transaction_id": str(txn_id), "status": 404 if missing else 503,
+                                          "detail": "Transaction not found" if missing else "Scoring failed; try again."})
+                logger.warning("Batch item failed: %s", txn_id, exc_info=True)
         return results
 
     # ------------------------------------------------------------------
@@ -433,29 +428,26 @@ class PredictionService:
                 feature_vector=feature_snapshot,
                 latency_ms=latency_ms,
             )
+            await db.commit()
             return log_entry.log_id
         except Exception as exc:
-            logger.warning(
-                "Prediction log write failed for txn %s: %s — "
-                "prediction was returned successfully to the client.",
-                transaction_id, exc
-            )
-            return request_id
+            await db.rollback()
+            logger.error("Audit write failed for transaction %s", transaction_id, exc_info=True)
+            raise RuntimeError("Prediction could not be durably recorded") from exc
 
 
-async def _parallel_history_fetch(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    merchant_id: uuid.UUID,
-    txn_ts: datetime,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Concurrently fetch user and merchant history.
-    Running both queries takes roughly max(t1, t2) instead of t1 + t2.
-    """
-    import asyncio
-    user_hist, merchant_hist = await asyncio.gather(
-        _fetch_user_history(db, user_id, txn_ts),
-        _fetch_merchant_history(db, merchant_id, txn_ts),
-    )
-    return user_hist, merchant_hist
+async def _parallel_history_fetch(db, user_id, merchant_id, txn_ts):
+    """Load both histories in one query on the request's single session."""
+    from datetime import timedelta
+    result = await db.execute(text("""
+        SELECT user_id, merchant_id, txn_timestamp, amount_usd, fraud_label, labelled_at
+        FROM fact_transaction
+        WHERE (user_id = :uid OR merchant_id = :mid)
+          AND txn_timestamp >= :lower AND txn_timestamp < :upper
+          AND upper(status::text) = 'COMPLETED'
+        ORDER BY txn_timestamp
+    """), {"uid": str(user_id), "mid": str(merchant_id), "lower": txn_ts - timedelta(days=30), "upper": txn_ts})
+    df = pd.DataFrame(result.fetchall(), columns=["user_id", "merchant_id", "txn_timestamp", "amount_usd", "fraud_label", "labelled_at"])
+    df["txn_timestamp"] = pd.to_datetime(df["txn_timestamp"], utc=True)
+    df["amount_usd"] = pd.to_numeric(df["amount_usd"], errors="coerce")
+    return df[df.user_id.astype(str) == str(user_id)], df[df.merchant_id.astype(str) == str(merchant_id)]

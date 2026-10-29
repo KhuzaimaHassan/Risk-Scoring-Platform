@@ -178,6 +178,7 @@ class PredictBatchResponse(BaseModel):
     total_scored: int
     total_fraud: int
     batch_latency_ms: int
+    errors: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

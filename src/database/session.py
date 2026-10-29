@@ -32,6 +32,9 @@ async_engine = create_async_engine(
     future=True,
     pool_pre_ping=True,
     pool_recycle=300,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    connect_args={"timeout": 10, "command_timeout": 30, "prepared_statement_cache_size": 0},
 )
 
 AsyncSessionFactory: async_sessionmaker[AsyncSession] = async_sessionmaker(
@@ -51,6 +54,9 @@ sync_engine = create_engine(
     future=True,
     pool_pre_ping=True,
     pool_recycle=300,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    connect_args={"connect_timeout": 10},
 )
 
 SyncSessionFactory: sessionmaker[Session] = sessionmaker(

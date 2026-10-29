@@ -711,6 +711,9 @@ def seed_database(cfg: GeneratorConfig | None = None) -> None:
     Uses sync SQLAlchemy session (not async) since this is a script context.
     Inserts in configurable batches to avoid OOM and long transactions.
     """
+    from config.settings import get_settings
+    if get_settings().environment == "production":
+        raise RuntimeError("Database reset is prohibited in production")
     if cfg is None:
         cfg = GeneratorConfig()
 

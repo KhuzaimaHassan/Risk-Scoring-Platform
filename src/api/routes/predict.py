@@ -34,15 +34,11 @@ router = APIRouter(prefix="/predict", tags=["Inference"])
 
 def _get_prediction_service(request: Request, threshold: float) -> PredictionService:
     """Build a PredictionService from application state (model cached at startup)."""
-    model      = request.app.state.model
-    model_meta = request.app.state.model_meta
-    version    = request.app.state.model_version
-    return PredictionService(
-        model=model,
-        model_meta=model_meta,
-        model_version=version,
-        threshold=threshold,
-    )
+    bundle = getattr(request.app.state, "model_bundle", None)
+    if bundle is None:
+        raise HTTPException(503, "Model unavailable. Please try again later.")
+    return PredictionService(bundle.model, bundle.metadata, bundle.version, bundle.threshold)
+
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +92,7 @@ async def predict_transaction(
         logger.error("Inference pipeline error for txn %s: %s", payload.transaction_id, exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Inference failed: {exc}",
+            detail="Scoring failed. Please try again later.",
         )
 
     return PredictResponse(
@@ -146,6 +142,9 @@ async def predict_batch(
         include_features=payload.include_features,
     )
 
+    if not results and service.batch_errors and any(e["status"] != 404 for e in service.batch_errors):
+        raise HTTPException(503, "Batch scoring unavailable. Please try again later.")
+
     batch_ms = int((time.perf_counter() - t0) * 1000)
 
     response_items = [
@@ -171,4 +170,5 @@ async def predict_batch(
         total_scored=len(results),
         total_fraud=sum(1 for r in results if r.is_fraud),
         batch_latency_ms=batch_ms,
+        errors=service.batch_errors,
     )
