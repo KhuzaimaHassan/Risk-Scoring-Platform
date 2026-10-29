@@ -318,3 +318,26 @@ def test_retraining_cooldown_prevents_repeated_training():
          patch.object(drift,"reconcile_ground_truth",AsyncMock()), patch.object(drift,"train") as training:
         asyncio.run(drift.check_drift_and_retrain(app))
     training.assert_not_called()
+
+
+def test_smoke_check_refuses_legacy_reset_route_without_requesting_it(monkeypatch):
+    import importlib.util
+    import sys
+    import httpx
+    spec = importlib.util.spec_from_file_location("smoke_check", Path(__file__).resolve().parents[2] / "scripts" / "test_api.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    paths = []
+    class LegacyClient:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, path):
+            paths.append(path)
+            assert path != "/api/v1/seed", "Never invoke the destructive legacy route"
+            body = {"status":"ok"} if path.endswith("health") else {"paths":{"/api/v1/seed":{}}}
+            return httpx.Response(200, json=body, request=httpx.Request("GET", "http://test"+path))
+    monkeypatch.setattr(sys,"argv",["test_api.py"])
+    monkeypatch.setattr(module.httpx,"Client",lambda **kwargs: LegacyClient())
+    with pytest.raises(AssertionError,match="Reset route must be absent"):
+        module.main()
+    assert paths == ["/api/v1/health","/openapi.json"]

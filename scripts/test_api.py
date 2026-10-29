@@ -18,7 +18,9 @@ def main():
     with httpx.Client(base_url=args.base_url, timeout=45) as client:
         health = client.get("/api/v1/health")
         assert health.status_code == 200 and health.json()["status"] == "ok", "Readiness failed"
-        assert client.get("/api/v1/seed").status_code == 404, "Reset route must be absent"
+        schema = client.get("/openapi.json")
+        schema.raise_for_status()
+        assert "/api/v1/seed" not in schema.json()["paths"], "Reset route must be absent"
         assert client.get("/api/v1/dashboard/stats").status_code == 401, "Dashboard must require authentication"
         token = client.post("/api/v1/token", data={"username":os.environ.get("ADMIN_USERNAME","admin"),"password":password})
         token.raise_for_status()
