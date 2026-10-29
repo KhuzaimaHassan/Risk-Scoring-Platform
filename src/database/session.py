@@ -34,7 +34,13 @@ async_engine = create_async_engine(
     pool_recycle=300,
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
-    connect_args={"timeout": 10, "command_timeout": 30, "prepared_statement_cache_size": 0},
+    connect_args={
+        "timeout": 10,
+        "command_timeout": 30,
+        "prepared_statement_cache_size": settings.db_prepared_statement_cache_size,
+        "statement_cache_size": settings.db_prepared_statement_cache_size,
+        "server_settings": {"jit": "off"},
+    },
 )
 
 AsyncSessionFactory: async_sessionmaker[AsyncSession] = async_sessionmaker(

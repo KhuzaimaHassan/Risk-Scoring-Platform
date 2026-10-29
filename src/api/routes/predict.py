@@ -14,7 +14,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Request, status, Depends
+from fastapi import APIRouter, HTTPException, Request, Response, status, Depends
 
 from src.api.auth import get_current_user
 
@@ -63,6 +63,7 @@ def _get_prediction_service(request: Request, threshold: float) -> PredictionSer
 async def predict_transaction(
     payload: PredictRequest,
     request: Request,
+    response: Response,
     db: AsyncDBSession,
     threshold: CachedThreshold,
     current_user: str = Depends(get_current_user),
@@ -75,7 +76,7 @@ async def predict_transaction(
         2. PredictionService fetches transaction + history from DB.
         3. FeaturePipeline builds the feature vector (strictly past-only).
         4. Cached sklearn Pipeline runs predict_proba().
-        5. Prediction is logged to prediction_logs (best-effort).
+        5. Prediction audit record is committed before success.
         6. PredictResponse is returned.
     """
     service = _get_prediction_service(request, threshold)
@@ -95,6 +96,9 @@ async def predict_transaction(
             detail="Scoring failed. Please try again later.",
         )
 
+    response.headers["Server-Timing"] = ", ".join(
+        f"{stage};dur={duration:.3f}" for stage, duration in result.timings_ms.items()
+    )
     return PredictResponse(
         transaction_id=result.transaction_id,
         fraud_probability=round(result.fraud_probability, 6),

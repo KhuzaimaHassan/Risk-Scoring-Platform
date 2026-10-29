@@ -101,6 +101,10 @@ class Settings(BaseSettings):
         default=False,
         description="Echo SQL queries to log (dev only, never in prod)",
     )
+    db_prepared_statement_cache_size: int = Field(
+        default=100, ge=0,
+        description="Prepared statements per async connection; set 0 for transaction poolers",
+    )
 
     # -----------------------------------------------------------------------
     # Model Registry & Artifact Storage

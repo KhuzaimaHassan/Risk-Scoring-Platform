@@ -18,8 +18,7 @@ Design principles:
       re-loads the file on the hot path)
     - Feature computation reuses transform_from_payload() (no DB access
       inside FeaturePipeline on the inference path)
-    - Prediction logging is a fire-and-forget async operation — failures
-      are logged as warnings but do NOT raise errors to the client
+    - Predictions succeed only after their audit record commits
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -49,12 +48,12 @@ logger = logging.getLogger(__name__)
 # Internal helpers: transaction + history DB fetch (async)
 # ---------------------------------------------------------------------------
 
-async def _fetch_transaction_with_dims(
+async def _fetch_scoring_context(
     db: AsyncSession,
     transaction_id: uuid.UUID,
 ) -> dict[str, Any] | None:
     """
-    Fetch a single transaction row joined with dim_user and dim_merchant.
+    Fetch the transaction, dimensions and past-only history in one snapshot.
     Returns None if not found.
     """
     sql = text("""
@@ -74,10 +73,23 @@ async def _fetch_transaction_with_dims(
             dm.is_online_only             AS merchant_is_online_only,
             dm.avg_transaction_amount     AS merchant_avg_transaction_amount,
             dm.category                   AS merchant_category,
-            dm.country_code               AS merchant_country_code
+            dm.country_code               AS merchant_country_code,
+            COALESCE(history.rows, '[]'::json) AS history_rows
         FROM   fact_transaction ft
         JOIN   dim_user     du ON du.user_id     = ft.user_id
         JOIN   dim_merchant dm ON dm.merchant_id = ft.merchant_id
+        LEFT JOIN LATERAL (
+            SELECT json_agg(json_build_object(
+                'user_id', h.user_id, 'merchant_id', h.merchant_id,
+                'txn_timestamp', h.txn_timestamp, 'amount_usd', h.amount_usd,
+                'fraud_label', h.fraud_label, 'labelled_at', h.labelled_at
+            ) ORDER BY h.txn_timestamp) AS rows
+            FROM fact_transaction h
+            WHERE (h.user_id = ft.user_id OR h.merchant_id = ft.merchant_id)
+              AND h.txn_timestamp >= ft.txn_timestamp - INTERVAL '30 days'
+              AND h.txn_timestamp < ft.txn_timestamp
+              AND upper(h.status::text) = 'COMPLETED'
+        ) history ON TRUE
         WHERE  ft.transaction_id = :txn_id
     """)
     result = await db.execute(sql, {"txn_id": str(transaction_id)})
@@ -87,70 +99,17 @@ async def _fetch_transaction_with_dims(
     return dict(zip(result.keys(), row))
 
 
-async def _fetch_user_history(
-    db: AsyncSession,
-    user_id: uuid.UUID,
-    before_ts: datetime,
-    lookback_days: int = 7,
-) -> pd.DataFrame:
-    """Fetch historical user transactions strictly before before_ts."""
-    from datetime import timedelta
+def _split_history(row):
+    """Decode the shared history response without another database round trip."""
+    history = pd.DataFrame(row["history_rows"], columns=[
+        "user_id", "merchant_id", "txn_timestamp", "amount_usd", "fraud_label", "labelled_at",
+    ])
+    history["txn_timestamp"] = pd.to_datetime(history["txn_timestamp"], utc=True)
+    history["amount_usd"] = pd.to_numeric(history["amount_usd"], errors="coerce")
+    history["fraud_label"] = pd.to_numeric(history["fraud_label"], errors="coerce")
+    return (history[history.user_id.astype(str) == str(row["user_id"])],
+            history[history.merchant_id.astype(str) == str(row["merchant_id"])])
 
-    lower = before_ts - timedelta(days=lookback_days)
-    sql = text("""
-        SELECT txn_timestamp, amount_usd, fraud_label
-        FROM   fact_transaction
-        WHERE  user_id = :uid
-          AND  txn_timestamp < :upper
-          AND  txn_timestamp >= :lower
-          AND  status = 'COMPLETED'
-        ORDER  BY txn_timestamp ASC
-    """)
-    result = await db.execute(sql, {
-        "uid": str(user_id),
-        "upper": before_ts,
-        "lower": lower,
-    })
-    rows = result.fetchall()
-    if not rows:
-        return pd.DataFrame(columns=["txn_timestamp", "amount_usd", "fraud_label"])
-    df = pd.DataFrame(rows, columns=["txn_timestamp", "amount_usd", "fraud_label"])
-    df["txn_timestamp"] = pd.to_datetime(df["txn_timestamp"], utc=True)
-    df["amount_usd"] = pd.to_numeric(df["amount_usd"], errors="coerce")
-    return df
-
-
-async def _fetch_merchant_history(
-    db: AsyncSession,
-    merchant_id: uuid.UUID,
-    before_ts: datetime,
-    lookback_days: int = 7,
-) -> pd.DataFrame:
-    """Fetch historical merchant transactions strictly before before_ts."""
-    from datetime import timedelta
-
-    lower = before_ts - timedelta(days=lookback_days)
-    sql = text("""
-        SELECT txn_timestamp, amount_usd, fraud_label
-        FROM   fact_transaction
-        WHERE  merchant_id = :mid
-          AND  txn_timestamp < :upper
-          AND  txn_timestamp >= :lower
-          AND  status = 'COMPLETED'
-        ORDER  BY txn_timestamp ASC
-    """)
-    result = await db.execute(sql, {
-        "mid": str(merchant_id),
-        "upper": before_ts,
-        "lower": lower,
-    })
-    rows = result.fetchall()
-    if not rows:
-        return pd.DataFrame(columns=["txn_timestamp", "amount_usd", "fraud_label"])
-    df = pd.DataFrame(rows, columns=["txn_timestamp", "amount_usd", "fraud_label"])
-    df["txn_timestamp"] = pd.to_datetime(df["txn_timestamp"], utc=True)
-    df["amount_usd"] = pd.to_numeric(df["amount_usd"], errors="coerce")
-    return df
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +160,7 @@ class PredictionResult:
     latency_ms: int
     scored_at: datetime
     feature_snapshot: dict[str, Any] | None
+    timings_ms: dict[str, float] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -247,12 +207,12 @@ class PredictionService:
 
         Steps:
             1. Fetch transaction + dimension rows from PostgreSQL.
-            2. Fetch user and merchant history (async, last 7 days).
+            2. Split the past-only 30-day history from the same database response.
             3. Build feature vector via FeaturePipeline.transform_from_payload().
             4. Run model.predict_proba() (hot path — model already in memory).
             5. Apply decision threshold → binary label.
             6. Build risk context (band + action + confidence).
-            7. Log prediction to prediction_logs (async, non-blocking on failure).
+            7. Commit the prediction audit record before returning success.
             8. Return PredictionResult.
 
         Args:
@@ -268,9 +228,12 @@ class PredictionService:
             RuntimeError: If feature computation or model inference fails.
         """
         t_start = time.perf_counter()
+        timings = {}
 
         # ── Step 1: Fetch transaction + dimensions ────────────────────────
-        row = await _fetch_transaction_with_dims(db, transaction_id)
+        row = await _fetch_scoring_context(db, transaction_id)
+        t_transaction = time.perf_counter()
+        timings["context_db"] = (t_transaction - t_start) * 1000
         if row is None:
             raise ValueError(
                 f"Transaction '{transaction_id}' not found in fact_transaction. "
@@ -281,13 +244,8 @@ class PredictionService:
         if hasattr(txn_ts, "tzinfo") and txn_ts.tzinfo is None:
             txn_ts = txn_ts.replace(tzinfo=timezone.utc)
 
-        user_id    = uuid.UUID(str(row["user_id"]))
-        merchant_id = uuid.UUID(str(row["merchant_id"]))
-
-        # ── Step 2: Fetch historical context (async, past-only) ──────────
-        user_history, merchant_history = await _parallel_history_fetch(
-            db, user_id, merchant_id, txn_ts
-        )
+        # ── Step 2: Split historical context from the same read snapshot ──
+        user_history, merchant_history = _split_history(row)
 
         # ── Step 3: Build feature vector ──────────────────────────────────
         txn_dict = {
@@ -325,12 +283,16 @@ class PredictionService:
             raise RuntimeError(f"Feature computation failed: {exc}") from exc
 
         # ── Step 4: Model inference ───────────────────────────────────────
+        t_features = time.perf_counter()
+        timings["features"] = (t_features - t_transaction) * 1000
         try:
             probs = await run_in_threadpool(self.model.predict_proba, feature_df)
             fraud_prob = float(probs[0, 1])
         except Exception as exc:
             logger.error("Model inference failed for txn %s: %s", transaction_id, exc)
             raise RuntimeError(f"Model inference failed: {exc}") from exc
+        t_inference = time.perf_counter()
+        timings["inference"] = (t_inference - t_features) * 1000
 
         # ── Step 5: Apply threshold ───────────────────────────────────────
         is_fraud = fraud_prob >= self.threshold
@@ -340,7 +302,7 @@ class PredictionService:
         latency_ms = int((time.perf_counter() - t_start) * 1000)
         scored_at  = datetime.now(timezone.utc)
 
-        # ── Step 7: Log prediction (best-effort — failures are logged) ────
+        # ── Step 7: Commit the audit record before returning success ─────
         import json
         feature_dict = json.loads(feature_df.iloc[0].to_json())
         feature_snapshot = feature_dict if include_features else None
@@ -354,12 +316,15 @@ class PredictionService:
         )
 
         latency_ms = int((time.perf_counter() - t_start) * 1000)
+        timings["audit"] = (time.perf_counter() - t_inference) * 1000
+        timings = {stage: round(duration, 3) for stage, duration in timings.items()}
         logger.info(
             "SCORED txn=%s | prob=%.4f | label=%s | threshold=%.2f | "
             "model=%s | latency=%dms",
             transaction_id, fraud_prob, "FRAUD" if is_fraud else "LEGIT",
             self.threshold, self.model_version, latency_ms,
         )
+        logger.info("SCORING_TIMINGS total_ms=%d stages_ms=%s", latency_ms, timings)
 
         return PredictionResult(
             transaction_id=transaction_id,
@@ -372,6 +337,7 @@ class PredictionService:
             latency_ms=latency_ms,
             scored_at=scored_at,
             feature_snapshot=feature_snapshot if include_features else None,
+            timings_ms=timings,
         )
 
     async def predict_batch(
@@ -412,7 +378,7 @@ class PredictionService:
     ) -> uuid.UUID:
         """
         Write prediction to prediction_logs table.
-        On any failure: log a warning and return a new UUID (non-fatal).
+        On any failure: roll back and raise; no success without a durable log.
         """
         request_id = uuid.uuid4()
         try:
@@ -434,20 +400,3 @@ class PredictionService:
             await db.rollback()
             logger.error("Audit write failed for transaction %s", transaction_id, exc_info=True)
             raise RuntimeError("Prediction could not be durably recorded") from exc
-
-
-async def _parallel_history_fetch(db, user_id, merchant_id, txn_ts):
-    """Load both histories in one query on the request's single session."""
-    from datetime import timedelta
-    result = await db.execute(text("""
-        SELECT user_id, merchant_id, txn_timestamp, amount_usd, fraud_label, labelled_at
-        FROM fact_transaction
-        WHERE (user_id = :uid OR merchant_id = :mid)
-          AND txn_timestamp >= :lower AND txn_timestamp < :upper
-          AND upper(status::text) = 'COMPLETED'
-        ORDER BY txn_timestamp
-    """), {"uid": str(user_id), "mid": str(merchant_id), "lower": txn_ts - timedelta(days=30), "upper": txn_ts})
-    df = pd.DataFrame(result.fetchall(), columns=["user_id", "merchant_id", "txn_timestamp", "amount_usd", "fraud_label", "labelled_at"])
-    df["txn_timestamp"] = pd.to_datetime(df["txn_timestamp"], utc=True)
-    df["amount_usd"] = pd.to_numeric(df["amount_usd"], errors="coerce")
-    return df[df.user_id.astype(str) == str(user_id)], df[df.merchant_id.astype(str) == str(merchant_id)]

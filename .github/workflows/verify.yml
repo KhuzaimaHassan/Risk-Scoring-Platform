@@ -3,6 +3,17 @@ on: [push, pull_request]
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: risk_test
+          POSTGRES_PASSWORD: TestOnly-DatabasePassword!
+          POSTGRES_DB: risk_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U risk_test -d risk_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       ENVIRONMENT: test
       DEBUG: "false"
@@ -10,6 +21,7 @@ jobs:
       MONITORING_ENABLED: "false"
       DB_HOST: 127.0.0.1
       DB_PORT: "1"
+      INTEGRATION_DATABASE_URL: postgresql+asyncpg://risk_test:TestOnly-DatabasePassword!@127.0.0.1:5432/risk_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

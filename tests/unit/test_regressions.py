@@ -222,13 +222,52 @@ def test_empty_dashboard_returns_no_invented_data():
     asyncio.run(run())
 
 
-def test_single_session_history_is_one_query():
+def test_missing_transaction_context_is_one_query():
     async def run():
-        db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(fetchall=lambda:[])))
-        users, merchants = await ps._parallel_history_fetch(db,uuid.uuid4(),uuid.uuid4(),datetime.now(timezone.utc))
-        assert users.empty and merchants.empty
+        db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(fetchone=lambda:None)))
+        assert await ps._fetch_scoring_context(db,uuid.uuid4()) is None
         db.execute.assert_awaited_once()
-        assert "labelled_at" in str(db.execute.call_args.args[0])
+    asyncio.run(run())
+
+
+def test_empty_context_history_produces_valid_features():
+    row = transaction_rows().iloc[0].to_dict()
+    row['history_rows'] = []
+    users, merchants = ps._split_history(row)
+    assert users.empty and merchants.empty
+    features = fp._featurise_single_row(pd.Series(row),users,merchants)
+    assert features['user_txn_count_30d'] == 0
+    assert features['merchant_txn_count_7d'] == 0
+
+
+def test_timing_header_includes_committed_audit_work(client):
+    c, app, _ = client
+    app.state.model_bundle = ModelBundle(None,{},'test',.5)
+    result = ps.PredictionResult(uuid.uuid4(),.2,False,ps._build_risk_context(.2,False),
+        'test',.5,uuid.uuid4(),17,datetime.now(timezone.utc),None,
+        {'context_db':5.0,'features':2.0,'inference':3.0,'audit':7.0})
+    with patch.object(ps.PredictionService,'predict',AsyncMock(return_value=result)):
+        response = c.post('/api/v1/predict',headers=authorization(),json={'transaction_id':str(result.transaction_id)})
+    assert response.status_code == 200
+    assert response.json()['latency_ms'] == 17
+    assert response.headers['server-timing'] == 'context_db;dur=5.000, features;dur=2.000, inference;dur=3.000, audit;dur=7.000'
+
+
+def test_service_latency_includes_time_waiting_for_audit_commit():
+    async def run():
+        row = transaction_rows().iloc[0].to_dict()
+        row.update(amount=100,history_rows=[])
+        clock = [0.0]
+        async def commit(): clock[0] += .25
+        db = SimpleNamespace(commit=AsyncMock(side_effect=commit),rollback=AsyncMock())
+        service = ps.PredictionService(SimpleNamespace(predict_proba=lambda frame:np.array([[.8,.2]])),{},'test',.5)
+        with patch.object(ps,'_fetch_scoring_context',AsyncMock(return_value=row)), \
+             patch.object(ps,'log_prediction',AsyncMock(return_value=SimpleNamespace(log_id=uuid.uuid4()))), \
+             patch.object(ps.time,'perf_counter',side_effect=lambda:clock[0]):
+            result = await service.predict(db,row['transaction_id'])
+        assert result.latency_ms == 250
+        assert result.timings_ms['audit'] == 250
+        db.commit.assert_awaited_once()
     asyncio.run(run())
 
 

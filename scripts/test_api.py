@@ -43,7 +43,9 @@ def main():
             assert abs(entry["score"] - score["risk_score"]) < .011
             assert abs(entry["amount_usd"] - score["feature_snapshot"]["amount_usd"]) < .0001
             counts.append(client.get("/api/v1/dashboard/stats").json()["total_transactions"])
-            predictions.append({"score":score["risk_score"],"latency_ms":score["latency_ms"],"server_ms":result.headers.get("x-process-time-ms")})
+            predictions.append({"score":score["risk_score"],"latency_ms":score["latency_ms"],
+                                "server_ms":result.headers.get("x-process-time-ms"),
+                                "stages":result.headers.get("server-timing")})
         assert counts[0] == counts[1], "Repeated scoring inflated unique transaction KPI"
         batch = client.post("/api/v1/predict/batch",json={"transaction_ids":[tid,"00000000-0000-4000-8000-000000000000"]})
         batch.raise_for_status()
