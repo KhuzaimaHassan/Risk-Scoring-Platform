@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-labelledby="title description">
+  <title id="title">Risk Scoring Platform workflow</title>
+  <desc id="description">Stored transactions pass through historical features and a versioned model. Successful predictions are committed to PostgreSQL and displayed in the analyst dashboard.</desc>
+  <defs>
+    <linearGradient id="background" x2="1" y2="1">
+      <stop stop-color="#111d35"/>
+      <stop offset="1" stop-color="#090e1b"/>
+    </linearGradient>
+    <linearGradient id="accent" x2="1" y2="0">
+      <stop stop-color="#5b8cff"/>
+      <stop offset="1" stop-color="#4ed7d2"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="1198" height="338" rx="24" fill="url(#background)" stroke="#263751"/>
+  <path d="M38 42H1162" stroke="#2c405f"/>
+  <rect x="38" y="38" width="160" height="7" rx="3.5" fill="url(#accent)"/>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <text x="38" y="85" fill="#83b9ff" font-size="13" font-weight="700" letter-spacing="3">RISK SCORING PLATFORM</text>
+    <text x="38" y="125" fill="#f1f5ff" font-size="29" font-weight="700">One transaction. A traceable scoring workflow.</text>
+    <text x="38" y="153" fill="#9aaecb" font-size="15">Context, history, model version, and prediction records — connected.</text>
+    <g fill="none" stroke="#48688d" stroke-width="2">
+      <path d="M242 235H265m-6-5 6 5-6 5"/>
+      <path d="M472 235H495m-6-5 6 5-6 5"/>
+      <path d="M702 235H725m-6-5 6 5-6 5"/>
+      <path d="M932 235H955m-6-5 6 5-6 5"/>
+    </g>
+    <g>
+      <rect x="38" y="190" width="200" height="112" rx="14" fill="#14213a" stroke="#2e4464"/>
+      <circle cx="64" cy="218" r="12" fill="#243e67"/>
+      <text x="64" y="222" text-anchor="middle" fill="#aacbff" font-size="12" font-weight="700">1</text>
+      <text x="55" y="254" fill="#f1f5ff" font-size="17" font-weight="600">Transaction context</text>
+      <text x="55" y="280" fill="#99b0d0" font-size="13">Stored UUID · PostgreSQL</text>
+    </g>
+    <g>
+      <rect x="268" y="190" width="200" height="112" rx="14" fill="#14213a" stroke="#2e4464"/>
+      <circle cx="294" cy="218" r="12" fill="#243e67"/>
+      <text x="294" y="222" text-anchor="middle" fill="#aacbff" font-size="12" font-weight="700">2</text>
+      <text x="285" y="254" fill="#f1f5ff" font-size="17" font-weight="600">Historical features</text>
+      <text x="285" y="280" fill="#99b0d0" font-size="13">Past-only transaction history</text>
+    </g>
+    <g>
+      <rect x="498" y="190" width="200" height="112" rx="14" fill="#162a49" stroke="#5b8cff"/>
+      <circle cx="524" cy="218" r="12" fill="#355a91"/>
+      <text x="524" y="222" text-anchor="middle" fill="#d8e7ff" font-size="12" font-weight="700">3</text>
+      <text x="515" y="254" fill="#f1f5ff" font-size="17" font-weight="600">Model scoring</text>
+      <text x="515" y="280" fill="#aac5ec" font-size="13">Versioned model · Threshold</text>
+    </g>
+    <g>
+      <rect x="728" y="190" width="200" height="112" rx="14" fill="#122a34" stroke="#315a66"/>
+      <circle cx="754" cy="218" r="12" fill="#214b56"/>
+      <text x="754" y="222" text-anchor="middle" fill="#9de7e3" font-size="12" font-weight="700">4</text>
+      <text x="745" y="254" fill="#f1f5ff" font-size="17" font-weight="600">Prediction record</text>
+      <text x="745" y="280" fill="#9cbec6" font-size="13">Feature snapshot · Commit</text>
+    </g>
+    <g>
+      <rect x="958" y="190" width="204" height="112" rx="14" fill="#122a34" stroke="#315a66"/>
+      <circle cx="984" cy="218" r="12" fill="#214b56"/>
+      <text x="984" y="222" text-anchor="middle" fill="#9de7e3" font-size="12" font-weight="700">5</text>
+      <text x="975" y="254" fill="#f1f5ff" font-size="17" font-weight="600">Analyst dashboard</text>
+      <text x="975" y="280" fill="#9cbec6" font-size="13">Inspect results · Review flags</text>
+    </g>
+  </g>
+</svg>
