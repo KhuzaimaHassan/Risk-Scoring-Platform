@@ -1,92 +1,128 @@
-# Live Demo
-## https://risk-scoring-platform-9h5e.onrender.com/ui/
-
 # Risk Scoring Platform
 
-Production-style fraud risk scoring platform built with FastAPI, PostgreSQL (via Supabase), and scikit-learn, featuring a modern React frontend with JWT authentication.
-It supports:
-- Real-time transaction scoring with sub-50ms latency
-- Model versioning and metadata registry
-- Feature engineering with leakage-safe historical windows
-- API + interactive real-time dashboard UI
+A fraud-risk scoring demo built with FastAPI, PostgreSQL, scikit-learn, and React. It scores transactions already stored in the database, saves successful predictions with their feature snapshots and model versions, and displays results in an authenticated dashboard.
 
-## Tech Stack
-- **Backend**: Python 3.12, FastAPI, SQLAlchemy (Async), Uvicorn
-- **Database**: PostgreSQL (hosted on Supabase) with asyncpg
-- **Machine Learning**: Scikit-Learn, Pandas, Joblib
-- **Frontend**: React, Vite, Recharts, Lucide Icons
-- **Deployment**: Render (Web Service), GitHub Actions (optional)
+[Live dashboard](https://risk-scoring-platform-sg.onrender.com/ui/) · [API docs](https://risk-scoring-platform-sg.onrender.com/docs) · [Readiness](https://risk-scoring-platform-sg.onrender.com/api/v1/health)
 
-## What Is Achieved
+The demo runs on **Render Free in Singapore**, with an external Supabase PostgreSQL database in Tokyo. The first visit after inactivity can take a minute or longer. Admin credentials are private; there is no public default login.
 
-This project successfully implements a complete, end-to-end Machine Learning Operations (MLOps) pipeline and full-stack application:
-1. **Real-Time Feature Engineering**: Dynamically computes user and merchant historical aggregations (e.g., velocity, average transaction amounts) at the exact time of the transaction to prevent data leakage.
-2. **Production ML Serving**: Wraps a scikit-learn model in a high-performance, asynchronous FastAPI inference service.
-3. **Immutable Audit Logging**: Every prediction is logged to a `prediction_log` table with its exact feature snapshot and model version for regulatory compliance and model monitoring.
-4. **Resilient Database Architecture**: Implements connection pooling (`pool_pre_ping`) and async SQLAlchemy to gracefully handle serverless database connection limits (Supabase PgBouncer).
-5. **Real-Time Dashboard**: A stunning React frontend that polls the backend to display live KPIs, animated Risk Score Trends, and a live feed of recent transactions.
+## Capabilities
 
-Given a `transaction_id` already stored in the database, the platform:
-1. Loads transaction + user + merchant context
-2. Builds raw + aggregated risk features
-3. Runs a trained model to estimate fraud probability
-4. Applies a decision threshold to classify fraud vs legit
-5. Logs prediction output for monitoring and analysis
+- JWT-protected single and batch scoring for stored transaction UUIDs.
+- A shared 31-feature training/serving contract using completed transactions from the preceding 30 days. Historical aggregates exclude the current transaction, equal timestamps, future events, and labels unavailable at event time.
+- A versioned Random Forest, validation-selected threshold, startup compatibility/quality checks, and an in-memory serving bundle.
+- Durable prediction logging: success requires the audit commit to succeed. Records include the score, feature snapshot, model version, and latency. Review/outcome fields can subsequently be updated; this is not a tamper-proof audit system.
+- Real dashboard data: distinct scored-transaction KPIs, normalized USD amounts, recent predictions, a 30-minute score chart, model registry, and review queue. Data refreshes every 30 seconds.
+- Explicit sign-out, session-scoped browser tokens, visible validation errors, sanitized server failures, and request IDs.
+- Readiness returns HTTP 503 when the database or serving model is unavailable.
+- Optional ground-truth reconciliation and guarded retraining. **Background monitoring is disabled on the Singapore demo**; automated retraining is not an active hosted capability.
 
-## Live Endpoints
+Scores and recommended actions are advisory. The app does not execute payments, block transactions, or confirm fraud by acknowledging a review.
 
-- UI: `https://risk-scoring-platform-9h5e.onrender.com/ui/`
-- Health: `https://risk-scoring-platform-9h5e.onrender.com/api/v1/health`
-- OpenAPI Docs: `https://risk-scoring-platform-9h5e.onrender.com/docs`
+## Performance and known limitations
 
-## Architecture & Flow
+Live browser smoke checks on **2026-10-31** passed login, database/model readiness, scoring, persisted results, score/feed agreement, invalid-input handling, model registry, and the empty review queue. Six predictions were made for one existing transaction; this was not a load test.
+
+| Measurement | Result |
+| --- | --- |
+| First scoring request after startup | 1,095 ms |
+| Five subsequent scoring requests | 655–955 ms; mean 887 ms |
+| Target | Under 50 ms — **not achieved** |
+| Cold startup | Initial requests timed out while the Free instance woke up |
+
+Displayed scoring latency includes context loading, feature computation, inference, and the durable audit commit. It excludes client-network time and dashboard refreshes. See [API timing headers](docs/API.md).
+
+The current model, `v20261029_production`, uses feature schema version 2 and threshold `0.15826714653647353`. Its stored chronological test evaluation is:
+
+| Metric | Result |
+| --- | --- |
+| Test transactions / fraud examples | 815 / 20 |
+| ROC AUC / PR AUC | 0.808 / 0.339 |
+| Precision / recall / F1 | 0.250 / 0.500 / 0.333 |
+| True positives / false negatives | 10 / 10 |
+| False positives / true negatives | 30 / 765 |
+
+These are limited demo results, not evidence of production readiness. Model quality needs improvement, the evaluation set is small, and the existing evaluation has informed development decisions. Stronger claims require additional representative data and a fresh independent evaluation. See [model metadata](models/metadata_v20261029_production.json) and the [evaluation report](reports/eval_v20261029_production.json).
+
+## Architecture
 
 ```mermaid
-graph TD
-    Client[Client App / Postman] -->|POST /predict| API[FastAPI Backend]
-    UI[React Dashboard] -->|GET /dashboard/*| API
-    
-    sublayer_DB[Supabase PostgreSQL]
-    
-    API -->|Fetch Context| DB[(Fact & Dim Tables)]
-    DB -.->|Raw Data| FE[Feature Engineering Pipeline]
-    FE -->|Feature Vector| ML[ML Model Inference]
-    ML -->|Risk Score & Decision| API
-    ML -.->|Audit Log| PL[(Prediction Log Table)]
-    
-    API -->|Response| Client
-    API -->|Live Feed| UI
+flowchart LR
+    UI[React dashboard] -->|JWT API requests| API[FastAPI]
+    Client[API client] -->|Stored transaction UUID| API
+    API -->|One context and history SELECT| DB[(PostgreSQL)]
+    API --> FE[Past-only features]
+    FE --> Model[Versioned model and threshold]
+    Model --> API
+    API -->|Commit prediction snapshot| DB
+    API -->|Score after successful commit| UI
+    API --> Client
 ```
 
-## Architecture Overview
+| Area | Location |
+| --- | --- |
+| Lifecycle, middleware, static UI | `src/main.py` |
+| Auth, scoring, operations, dashboard routes | `src/api/` |
+| Context query, inference, audit commit | `src/services/prediction_service.py` |
+| Shared feature contract | `src/features/feature_pipeline.py` |
+| Training, evaluation, file-backed registry | `src/training/` |
+| Optional reconciliation/retraining | `src/services/drift_service.py` |
+| ORM tables and connections | `src/database/` |
+| Dashboard | `frontend/src/App.jsx` |
+| Serving artifacts and registry | `models/` |
 
-Core flow:
-- `src/main.py`: app startup, model caching, middleware, route wiring, UI mount
-- `src/api/routes/predict.py`: `/predict` and `/predict/batch` (Secured with JWT)
-- `src/api/routes/auth.py`: `/token` (OAuth2 JWT generation)
-- `src/services/prediction_service.py`: orchestration layer (DB fetch -> features -> model -> log)
-- `src/services/drift_service.py`: APScheduler job for drift detection and automated retraining
-- `src/features/feature_pipeline.py`: feature computation pipeline
-- `src/training/train.py`: training + evaluation + artifact persistence
-- `models/registry.json`: active model registry
+The API and built frontend share one Render web service. The serving registry is `models/registry.json`; the database registry table is not the source of the serving model. See [deployment and persistence](DEPLOY_FREE.md).
 
-UI:
-- `frontend/src/App.jsx`: React frontend with login screen and real-time dashboard
-- `frontend/src/index.css`: Tailwind-free vanilla CSS design system
-- `frontend/dist/`: Built static assets served by FastAPI
+## Local setup
 
-## API Summary
+Use Python **3.13**, Node.js **22.14**, npm, and PostgreSQL. CI uses PostgreSQL 18. Run commands from the repository root; examples use PowerShell.
 
-Base path: `/api/v1`
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+python -m pip install -r requirements-dev.txt
+Copy-Item .env.example .env
+npm --prefix frontend ci
+```
 
-- `GET /health`: liveness/readiness + DB + model state
-- `GET /model-info`: active model metadata + metrics
-- `GET /models`: model registry listing
-- `POST /token`: Obtain JWT token (requires `admin_username` and `admin_password`)
-- `POST /predict`: score one transaction (requires JWT)
-- `POST /predict/batch`: score multiple transactions (requires JWT)
+Edit `.env` before starting:
 
-Example request:
+- Set `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` for your own database.
+- Set `ADMIN_USERNAME` and a unique `ADMIN_PASSWORD` of at least 12 characters and at most 72 UTF-8 bytes. Use a generated ASCII password to avoid byte-length ambiguity.
+- Replace `SECRET_KEY` with a separate randomly generated secret.
+- Keep `DEBUG=false`. Use `ENVIRONMENT=development` for local development.
+- Keep `MONITORING_ENABLED=false` for a demo with no background training jobs.
+
+Keep credentials out of Git and screenshots. Without `ADMIN_PASSWORD`, local sign-in returns 503; production startup requires it.
+
+### Prepare local data
+
+Scoring needs the expected tables and stored transactions. The app does not initialize or seed them on startup, and there is no HTTP seed/reset route.
+
+For a **new, disposable local database only**, create an empty database and matching role using PostgreSQL administration tools. Confirm `.env` points to that disposable database, then generate synthetic data:
+
+```powershell
+python scripts/seed_db.py --users 20 --merchants 5 --transactions 400
+```
+
+**The seeder drops and recreates application tables, deleting existing data.** It refuses `ENVIRONMENT=production`; never change a hosted environment to bypass that guard. New synthetic data does not reproduce the committed model's evaluation dataset.
+
+### Run
+
+```powershell
+npm --prefix frontend run build
+python -m uvicorn src.main:app --host 127.0.0.1 --port 8000
+```
+
+Open [the local dashboard](http://127.0.0.1:8000/ui/) or [local API docs](http://127.0.0.1:8000/docs). Sign in with your configured credentials and select a stored transaction.
+
+For frontend development, keep the API running and run `npm --prefix frontend run dev`. Vite proxies `/api` to `http://127.0.0.1:8000`. See [frontend instructions](frontend/README.md).
+
+## API
+
+The base path is `/api/v1`. Public operations include `/live`, `/health`, `/model-info`, and `/models`. Scoring and every dashboard route require a bearer token obtained through `POST /token`, using form fields `username` and `password`.
+
+Example body for `POST /api/v1/predict`:
 
 ```json
 {
@@ -95,93 +131,45 @@ Example request:
 }
 ```
 
-## Recent Enhancements (Step 2 Complete)
+The UUID must exist in that database. `fraud_probability` is 0–1; `risk_score` and dashboard scores are 0–100. Batch requests use `transaction_ids` and can return successes alongside per-item errors. See [API contracts and errors](docs/API.md).
 
-### Real-Time Dashboard Integration
-The React UI (`frontend/src/App.jsx`) has been fully integrated with live backend data, replacing all hardcoded mock data.
-- **KPIs**: Added `Total Volume`, `Processed Txns`, and `Total Fraud Caught` metrics.
-- **Risk Score Trends**: Interactive `Recharts` graph plotting the latest model predictions over time.
-- **Recent Transactions Feed**: Live scrolling table showing the latest transactions, amounts, and their fraud risk scores.
-- **Auto-Refresh**: Dashboard polls the backend every 30 seconds for live updates.
-
-### Backend Dashboard Endpoints (`src/api/routes/dashboard.py`)
-- `GET /api/v1/dashboard/stats`: Returns aggregated KPIs.
-- `GET /api/v1/dashboard/chart-data`: Returns the 20 most recent predictions for time-series plotting.
-- `GET /api/v1/dashboard/recent-transactions`: Returns the 10 latest transactions joined with prediction outcomes.
-
-### Production Deployment Fixes
-- **Database Connection Resilience**: Added `pool_pre_ping=True` and `pool_recycle=300` to the SQLAlchemy `async_engine` to gracefully handle Supabase PgBouncer connection drops.
-- **PostgreSQL Enum Case Sensitivity**: Fixed a bug where the prediction service failed to query historical transactions because the `txn_status_enum` in the hosted Supabase database expected uppercase values (`COMPLETED`) while the codebase used lowercase strings.
-- **Global Error Handling**: Upgraded the FastAPI generic exception handler to output full Python tracebacks in the JSON response to assist with debugging deployed instances.
-
-## Local Setup
-
-### 1) Create and activate virtualenv
+## Verification
 
 ```powershell
-python -m venv venv
-.\venv\Scripts\activate
+python -m pytest tests -q
+npm --prefix frontend run lint
+npm --prefix frontend run build
+npm --prefix frontend audit --audit-level=moderate
 ```
 
-### 2) Install dependencies
+The PostgreSQL integration check requires `INTEGRATION_DATABASE_URL` pointing to an isolated test database; otherwise that check is skipped. CI provisions PostgreSQL 18 and runs the full suite plus frontend lint/build and the advisory check. The last full code verification before these documentation changes passed 58 tests.
+
+With the local API running and credentials configured:
 
 ```powershell
-pip install -r requirements-run.txt
+python scripts/test_api.py --base-url http://127.0.0.1:8000
 ```
 
-### 3) Configure environment
+The smoke script never seeds or resets data. It creates prediction records while testing single/batch scoring; use a test database. It prints latency/stage samples, but never credentials.
 
-Copy `.env.example` to `.env` and update:
-- `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
-- `SECRET_KEY`
-- `ENVIRONMENT` / `DEBUG`
-
-### 4) Run app
+## Training and model lifecycle
 
 ```powershell
-$env:DEBUG='false'
-python -m uvicorn src.main:app --host 127.0.0.1 --port 8000
+python scripts/train_model.py --version v_local_candidate
 ```
 
-Open:
-- UI: `http://127.0.0.1:8000/ui/`
-- Docs: `http://127.0.0.1:8000/docs`
+The default training configuration uses chronological train/validation/test partitions, past-only features, and validation-based threshold selection. The command saves a candidate/report without promotion. Review the data, metrics, and quality gates before promoting any candidate.
 
-## Training & Data
+The optional background path reconciles labels and evaluates recent resolved outcomes for the serving model. Sample/cooldown conditions govern retraining. With `RETRAINING_AUTO_PROMOTE=true`, promotion also requires quality gates and improvement against the incumbent on identical evaluation rows. The serving bundle is refreshed with registry rollback on load failure. This is a single-process mechanism, not a distributed rollout system.
 
-Train model:
+Render Free storage is ephemeral: runtime-trained artifacts disappear on restart/redeploy unless saved externally and deliberately included in a release. Committed curated artifacts provide the demo's restart-safe baseline.
 
-```powershell
-python scripts/train_model.py
-```
+## Deployment and cost
 
-Seed data (if needed):
+See [DEPLOY_FREE.md](DEPLOY_FREE.md) for configuration, validation, and free-tier limits. `render.yaml` is a template for **one Free web service using an externally supplied database**; it does not provision PostgreSQL.
 
-```powershell
-python scripts/seed_db.py
-```
-
-Smoke test API:
-
-```powershell
-python scripts/test_api.py
-```
-
-## Deployment (Render)
-
-This repo includes:
-- `render.yaml` (Blueprint for web service + free Postgres)
-- `DEPLOY_FREE.md` (deployment notes)
-
-Important Render note:
-- In production mode, `SECRET_KEY` must not be default.
-- `render.yaml` is configured to generate `SECRET_KEY` automatically.
-
-## Repository Notes
-
-- Generated outputs and old artifacts are trimmed to keep deploys and diffs manageable.
-- Active model files are kept for runtime startup compatibility.
+Free compute does not guarantee a zero total bill: bandwidth and build allowances apply. Cold starts, shared free hours, cross-region database latency, and weak model evaluation remain limitations. No uptime or sub-50 ms guarantee is offered.
 
 ## License
 
-This project is for educational and demo purposes unless a separate license is added.
+No license file is included. This is an educational/demo project; no open-source license grant is asserted here.
