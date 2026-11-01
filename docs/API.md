@@ -1,5 +1,7 @@
 # API behavior
 
+[Project overview](../README.md)
+
 Base path: `/api/v1`. The running service's [OpenAPI docs](https://risk-scoring-platform-sg.onrender.com/docs) provide full request/response schemas. UI and API share one origin in the demo.
 
 ## Routes
