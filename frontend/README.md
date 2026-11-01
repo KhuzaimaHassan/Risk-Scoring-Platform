@@ -23,6 +23,8 @@ npm --prefix frontend audit --audit-level=moderate
 
 FastAPI serves `frontend/dist` at `/ui/`, including on Render. Rebuild after source changes; Render rebuilds these assets during deployment.
 
+The `minimatch` override pins the lint tools to a patched version for [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249). It affects development tooling, not the browser bundle. Review/remove the override when upstream ESLint dependencies accept a patched version directly.
+
 ## Behavior
 
 - The JWT is held in `sessionStorage` for the browser tab and removed on sign-out or an authenticated API 401 response.
